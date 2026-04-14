@@ -5,7 +5,10 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ('ankama_launcher_emulator/server/dofus3/script.js', 'ankama_launcher_emulator/server/dofus3'),
+        ('ankama_launcher_emulator/server/retro/script.js', 'ankama_launcher_emulator/server/retro'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
