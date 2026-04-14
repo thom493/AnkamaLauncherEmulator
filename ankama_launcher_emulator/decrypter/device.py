@@ -85,7 +85,7 @@ class Device:
     @staticmethod
     def getArch():
         # Map Python's platform.machine() to JavaScript's os.arch() style
-        arch_map = {"AMD64": "x64", "x86_64": "x64", "i386": "x86", "i686": "x86"}
+        arch_map = {"AMD64": "x64", "x86_64": "x64", "i386": "x86", "i686": "x86", "ARM64": "arm64", "aarch64": "arm64"}
         return arch_map[platform.machine()]
 
     @staticmethod
