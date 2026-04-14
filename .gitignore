@@ -5,3 +5,17 @@ poetry.lock
 dist
 build
 LauncherSourceCode
+# AI assistants & editor configs
+.claude/
+.cursor/
+.cursorrules
+.kiro/
+.mcp.json
+.opencode.json
+.windsurfrules
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+
+# Added by code-review-graph
+.code-review-graph/
