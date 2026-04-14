@@ -85,8 +85,12 @@ class Device:
     @staticmethod
     def getArch():
         # Map Python's platform.machine() to JavaScript's os.arch() style
-        arch_map = {"AMD64": "x64", "x86_64": "x64", "i386": "x86", "i686": "x86", "ARM64": "arm64", "aarch64": "arm64"}
-        return arch_map[platform.machine()]
+        arch_map = {"AMD64": "x64", "x86_64": "x64", "i386": "x86", "i686": "x86", "aarch64": "arm64"}
+        machine = platform.machine()
+        # Windows ARM64: Zaap runs as x64 under emulation, so arch must be x64 to match UUID
+        if machine == "ARM64" and sys.platform == "win32":
+            return "x64"
+        return arch_map.get(machine, machine.lower())
 
     @staticmethod
     def getPlatform():
