@@ -37,12 +37,14 @@ from ankama_launcher_emulator.gui.consts import (
 )
 from ankama_launcher_emulator.gui.download_banner import DownloadBanner
 from ankama_launcher_emulator.gui.game_selector_card import GameSelectorCard
+from ankama_launcher_emulator.gui.shield_browser_dialog import ShieldBrowserDialog
 from ankama_launcher_emulator.gui.shield_dialog import ShieldCodeDialog
 from ankama_launcher_emulator.gui.star_dialog import (
     StarBar,
     has_shown_star_repo,
 )
 from ankama_launcher_emulator.gui.utils import run_in_background
+from ankama_launcher_emulator.haapi.pkce_auth import PkceSession
 from ankama_launcher_emulator.haapi.shield import (
     ShieldRequired,
     check_proxy_needs_shield,
@@ -297,26 +299,44 @@ class MainWindow(QMainWindow):
         card: AccountCard,
         set_panel_status: Callable[[str], None],
     ) -> None:
-        api_key = CryptoHelper.getStoredApiKey(err.login)["apikey"]["key"]
+        # Step 1: PKCE login via embedded browser (GUI thread)
+        pkce = PkceSession(game_id=err.game_id, proxy_url=err.proxy_url)
+        browser = ShieldBrowserDialog(pkce.auth_url, err.login, parent=self)
+        if browser.exec() != QDialog.DialogCode.Accepted:
+            card.set_launch_enabled(True)
+            return
 
-        # Step 1: Request security code (background thread)
-        def send_code(on_progress: Callable) -> dict:
+        auth_code = browser.get_code()
+        if not auth_code:
+            self._show_error("No authorization code received")
+            card.set_launch_enabled(True)
+            return
+
+        # Step 2: Exchange code → fresh API key, request Shield code, show dialog
+        def exchange_and_request(on_progress: Callable) -> str:
+            on_progress("Exchanging authorization code...")
+            fresh_key = pkce.exchange(auth_code)
+            logger.info("[SHIELD] PKCE exchange successful, requesting security code")
             on_progress("Requesting security code...")
-            return request_security_code(api_key, err.proxy_url)
-
-        def on_code_sent(result: object) -> None:
+            result = request_security_code(fresh_key, err.proxy_url)
             logger.info(f"[SHIELD] SecurityCode response: {result}")
-            self._show_shield_code_dialog(err, api_key, launch, card, set_panel_status)
+            return fresh_key
 
-        def on_code_error(send_err: object) -> None:
-            self._show_error(f"Shield code request failed: {send_err}")
+        def on_key_ready(result: object) -> None:
+            fresh_key = str(result)
+            self._show_shield_code_dialog(
+                err, fresh_key, launch, card, set_panel_status
+            )
+
+        def on_exchange_error(exc: object) -> None:
+            self._show_error(f"Shield auth failed: {exc}")
             set_panel_status("")
             card.set_launch_enabled(True)
 
         run_in_background(
-            send_code,
-            on_success=on_code_sent,
-            on_error=on_code_error,
+            exchange_and_request,
+            on_success=on_key_ready,
+            on_error=on_exchange_error,
             on_progress=set_panel_status,
             parent=self,
         )
@@ -324,12 +344,11 @@ class MainWindow(QMainWindow):
     def _show_shield_code_dialog(
         self,
         err: ShieldRequired,
-        api_key: str,
+        fresh_key: str,
         launch: Callable,
         card: AccountCard,
         set_panel_status: Callable[[str], None],
     ) -> None:
-        # Step 2: Ask user for code (GUI thread)
         dialog = ShieldCodeDialog(err.login, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             card.set_launch_enabled(True)
@@ -343,7 +362,7 @@ class MainWindow(QMainWindow):
         # Step 3: Validate code + retry launch (background thread)
         def validate_and_launch(on_progress: Callable) -> int:
             on_progress("Validating security code...")
-            result = validate_security_code(api_key, err.proxy_url, code)
+            result = validate_security_code(fresh_key, err.proxy_url, code)
             logger.info(f"[SHIELD] ValidateCode response: {result}")
             on_progress("Shield validated, launching...")
             self._proxy_store.save_validated(err.login, err.proxy_url)
