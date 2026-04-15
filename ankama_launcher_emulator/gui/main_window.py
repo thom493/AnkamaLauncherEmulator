@@ -1,8 +1,10 @@
+import logging
 from dataclasses import dataclass, field
 from typing import Callable, cast
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
+    QDialog,
     QFrame,
     QHBoxLayout,
     QMainWindow,
@@ -35,14 +37,23 @@ from ankama_launcher_emulator.gui.consts import (
 )
 from ankama_launcher_emulator.gui.download_banner import DownloadBanner
 from ankama_launcher_emulator.gui.game_selector_card import GameSelectorCard
+from ankama_launcher_emulator.gui.shield_dialog import ShieldDialog
 from ankama_launcher_emulator.gui.star_dialog import (
     StarBar,
     has_shown_star_repo,
 )
 from ankama_launcher_emulator.gui.utils import run_in_background
+from ankama_launcher_emulator.haapi.pkce_auth import PkceSession
+from ankama_launcher_emulator.haapi.shield import (
+    ShieldRequired,
+    check_proxy_needs_shield,
+)
 from ankama_launcher_emulator.server.server import AnkamaLauncherServer
 from ankama_launcher_emulator.utils.internet import get_available_network_interfaces
 from ankama_launcher_emulator.utils.proxy import build_proxy_listener, verify_proxy_ip
+from ankama_launcher_emulator.utils.proxy_store import ProxyStore
+
+logger = logging.getLogger()
 
 
 @dataclass
@@ -68,6 +79,7 @@ class MainWindow(QMainWindow):
         self._server = server
         self._accounts: list = accounts
         self._interfaces: dict[str, tuple[str, str]] = all_interface
+        self._proxy_store = ProxyStore()
         self._pages: dict[bool, GamePageState] = {
             True: GamePageState(),
             False: GamePageState(),
@@ -201,6 +213,9 @@ class MainWindow(QMainWindow):
         for account in accounts:
             login = account["apikey"]["login"]
             card = AccountCard(login, all_interface, container)
+            saved_proxy = self._proxy_store.get_proxy(login)
+            if saved_proxy:
+                card.set_proxy(saved_proxy)
             cards.append(card)
             card.launch_requested.connect(
                 self._make_launch_handler(launch, login, card, set_panel_status)
@@ -247,8 +262,14 @@ class MainWindow(QMainWindow):
                 self._show_success(f"Game launch for {login}")
                 set_panel_status("")
                 card.set_running(int(result))  # type: ignore[arg-type]
+                if proxy:
+                    self._proxy_store.save_validated(login, str(proxy), exit_ip=None)
 
             def on_error(err: object) -> None:
+                if isinstance(err, ShieldRequired):
+                    set_panel_status("")
+                    self._handle_shield(err, launch, card, set_panel_status)
+                    return
                 self._show_error(str(err))
                 set_panel_status("")
                 card.set_launch_enabled(True)
@@ -268,6 +289,69 @@ class MainWindow(QMainWindow):
 
         return handler
 
+    def _handle_shield(
+        self,
+        err: ShieldRequired,
+        launch: Callable,
+        card: AccountCard,
+        set_panel_status: Callable[[str], None],
+    ) -> None:
+        pkce = PkceSession(game_id=err.game_id, proxy_url=err.proxy_url)
+        dialog = ShieldDialog(pkce.auth_url, err.login, parent=self)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            card.set_launch_enabled(True)
+            return
+
+        code = dialog.get_code()
+        if not code:
+            card.set_launch_enabled(True)
+            return
+
+        def exchange_and_launch(on_progress: Callable) -> int:
+            on_progress("Exchanging authorization code...")
+            pkce.exchange(code)
+            on_progress("Shield validated, launching...")
+            self._proxy_store.save_validated(err.login, err.proxy_url)
+            return launch(
+                err.login,
+                None,
+                err.proxy_url,
+                on_progress=on_progress,
+            )
+
+        def on_success(result: object) -> None:
+            self._show_success(f"Game launch for {err.login}")
+            set_panel_status("")
+            card.set_running(int(result))  # type: ignore[arg-type]
+
+        def on_error(retry_err: object) -> None:
+            self._show_error(str(retry_err))
+            set_panel_status("")
+            card.set_launch_enabled(True)
+
+        run_in_background(
+            exchange_and_launch,
+            on_success=on_success,
+            on_error=on_error,
+            on_progress=set_panel_status,
+            parent=self,
+        )
+
+    def _check_shield(
+        self,
+        login: str,
+        proxy_url: str,
+        game_id: int,
+        on_progress: Callable[[str], None] | None,
+    ) -> None:
+        """Check if proxy IP needs Shield verification. Raises ShieldRequired if so."""
+        if on_progress:
+            on_progress("Checking proxy authorization...")
+        api_key = CryptoHelper.getStoredApiKey(login)["apikey"]["key"]
+        if check_proxy_needs_shield(api_key, proxy_url, game_id):
+            raise ShieldRequired(login, proxy_url, game_id)
+
     def _launch_dofus(
         self,
         login: str,
@@ -281,6 +365,7 @@ class MainWindow(QMainWindow):
             if on_progress:
                 on_progress("Verifying proxy...")
             verify_proxy_ip(proxy_url)
+            self._check_shield(login, proxy_url, 102, on_progress)
         return self._server.launch_dofus(
             login,
             proxy_listener=proxy_listener,
@@ -301,6 +386,7 @@ class MainWindow(QMainWindow):
             if on_progress:
                 on_progress("Verifying proxy...")
             verify_proxy_ip(proxy_url)
+            self._check_shield(login, proxy_url, 101, on_progress)
         return self._server.launch_retro(
             login,
             proxy_url=proxy_url,
@@ -396,6 +482,9 @@ class MainWindow(QMainWindow):
         assert state.layout is not None
         login = account["apikey"]["login"]
         card = AccountCard(login, all_interface)
+        saved_proxy = self._proxy_store.get_proxy(login)
+        if saved_proxy:
+            card.set_proxy(saved_proxy)
         state.cards.append(card)
         card.launch_requested.connect(
             self._make_launch_handler(

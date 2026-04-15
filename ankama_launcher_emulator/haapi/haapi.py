@@ -85,18 +85,20 @@ class Haapi:
         body = response.json()
         return body
 
-    @retry_internet
     def refreshApiKey(self) -> None:
         if not self.refresh_token:
             return
         url = ANKAMA_API_REFRESH_API_KEY
-        response = self.zaap_session.post(
-            url,
-            data=f"refresh_token={self.refresh_token}&long_life_token=true",
-            headers={"content-type": "text/plain;charset=UTF-8"},
-            verify=False,
-        )
-        response.raise_for_status()
+        try:
+            response = self.zaap_session.post(
+                url,
+                data=f"refresh_token={self.refresh_token}&long_life_token=true",
+                headers={"content-type": "text/plain;charset=UTF-8"},
+                verify=False,
+            )
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as err:
+            logger.warning(f"[HAAPI] RefreshApiKey failed ({err}), continuing anyway")
 
     @retry_internet
     def createToken(self, game_id: int, certif: DecipheredCertifDatas | None) -> str:

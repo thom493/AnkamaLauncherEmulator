@@ -161,6 +161,9 @@ class AccountCard(CardWidget):
     def is_running(self) -> bool:
         return self._current_pid is not None
 
+    def set_proxy(self, proxy_url: str) -> None:
+        self._proxy_input.setText(proxy_url)
+
     def update_interfaces(self, all_interface: dict[str, tuple[str, str]]) -> None:
         current_data = self._ip_combo.currentData()
         self._ip_combo.clear()
