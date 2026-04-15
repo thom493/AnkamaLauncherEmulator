@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QMainWindow,
+    QMessageBox,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -43,6 +44,8 @@ from ankama_launcher_emulator.gui.star_dialog import (
     has_shown_star_repo,
 )
 from ankama_launcher_emulator.gui.utils import run_in_background
+from ankama_launcher_emulator.haapi.account_manager import remove_account
+from ankama_launcher_emulator.haapi.pkce_auth import refresh_api_key_for_proxy
 from ankama_launcher_emulator.haapi.shield import (
     ShieldRequired,
     check_proxy_needs_shield,
@@ -193,6 +196,9 @@ class MainWindow(QMainWindow):
         )
         self._cards.append(card)
         card.launch_requested.connect(self._make_launch_handler(login, card))
+        card.remove_requested.connect(
+            lambda l=login, c=card: self._on_remove_account(l, c)
+        )
         card.error_occurred.connect(self._show_error)
         self._card_layout.insertWidget(self._card_layout.count() - 1, card)
         return card
@@ -385,6 +391,9 @@ class MainWindow(QMainWindow):
                 on_progress("Verifying proxy...")
             verify_proxy_ip(proxy_url)
             self._check_shield(login, proxy_url, on_progress)
+            if on_progress:
+                on_progress("Refreshing token for proxy...")
+            refresh_api_key_for_proxy(login, proxy_url)
         return self._server.launch_dofus(
             login,
             proxy_listener=proxy_listener,
@@ -406,12 +415,55 @@ class MainWindow(QMainWindow):
                 on_progress("Verifying proxy...")
             verify_proxy_ip(proxy_url)
             self._check_shield(login, proxy_url, on_progress)
+            if on_progress:
+                on_progress("Refreshing token for proxy...")
+            refresh_api_key_for_proxy(login, proxy_url)
         return self._server.launch_retro(
             login,
             proxy_url=proxy_url,
             interface_ip=interface_ip,
             on_progress=on_progress,
         )
+
+    # --- Account removal ---
+
+    def _on_remove_account(self, login: str, card: AccountCard) -> None:
+        if card.is_running:
+            self._show_error("Stop the game before removing")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Remove Account",
+            f"Remove {login}?\nThis deletes the API key and certificate.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        def task(_on_progress: object) -> None:
+            try:
+                stored = CryptoHelper.getStoredApiKey(login)
+                api_key = stored["apikey"]["key"]
+            except StopIteration:
+                api_key = None
+            remove_account(login, api_key)
+
+        def on_success(_result: object) -> None:
+            self._proxy_store.assign_proxy(login, None)
+            self._card_layout.removeWidget(card)
+            card.hide()
+            card.deleteLater()
+            self._cards.remove(card)
+            self._accounts = [
+                a for a in self._accounts if a["apikey"]["login"] != login
+            ]
+            self._show_success(f"Removed {login}")
+
+        def on_error(err: object) -> None:
+            self._show_error(f"Remove failed: {err}")
+
+        run_in_background(task, on_success=on_success, on_error=on_error, parent=self)
 
     # --- Dialogs ---
 

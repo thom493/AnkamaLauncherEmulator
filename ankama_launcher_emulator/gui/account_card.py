@@ -19,6 +19,7 @@ class AccountCard(CardWidget):
     launch_requested = pyqtSignal(
         object, object
     )  # (interface_ip: str | None, proxy_id: str | None)
+    remove_requested = pyqtSignal()
     error_occurred = pyqtSignal(str)
 
     def __init__(
@@ -79,6 +80,11 @@ class AccountCard(CardWidget):
         self._launch_btn.setFixedWidth(100)
         self._launch_btn.clicked.connect(self._on_btn_clicked)
         layout.addWidget(self._launch_btn)
+
+        self._remove_btn = PushButton("X")
+        self._remove_btn.setFixedWidth(36)
+        self._remove_btn.clicked.connect(self.remove_requested.emit)
+        layout.addWidget(self._remove_btn)
 
     def _refresh_proxy_combo(self) -> None:
         current_pid = self._proxy_combo.currentData()
