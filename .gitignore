@@ -16,6 +16,8 @@ LauncherSourceCode
 AGENTS.md
 CLAUDE.md
 GEMINI.md
+.DS_Store/
+.DS_Store
 
 # Added by code-review-graph
 .code-review-graph/
@@ -37,3 +39,12 @@ resources/Bubble.D3.Bot/
 resources/dofus-multi/
 resources/CertificateService.cs
 resources/HaapiService.cs
+resources/ankalt launcher.png
+
+docs/superpowers/
+.superpowers/brainstorm/98562-1776278358/content/layout-directions.html
+.gitignore
+.superpowers/brainstorm/98562-1776278358/state/server-stopped
+.superpowers/brainstorm/98562-1776278358/state/server.pid
+docs/superpowers/specs/2026-04-15-launcher-gui-refresh-design.md
+.worktrees/
