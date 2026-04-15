@@ -347,7 +347,24 @@ class MainWindow(QMainWindow):
         proxy_url: str,
         on_progress: Callable[[str], None] | None,
     ) -> None:
-        """Check if proxy IP needs Shield verification. Raises ShieldRequired if so."""
+        """Check if proxy IP needs Shield verification. Raises ShieldRequired if so.
+
+        If a certificate already exists locally, skip entirely — certificates are
+        machine-bound (hm1/hm2), not IP-bound. CreateToken will include the
+        certificate_hash which authorizes the request regardless of proxy IP.
+
+        Shield enrollment only needed when no certificate exists AND account
+        security requires it.
+        """
+        try:
+            CryptoHelper.getStoredCertificate(login)
+            logger.info(
+                f"[SHIELD] Certificate exists for {login}, skipping Shield check"
+            )
+            return
+        except FileNotFoundError:
+            pass
+
         if on_progress:
             on_progress("Checking proxy authorization...")
         api_key = CryptoHelper.getStoredApiKey(login)["apikey"]["key"]
