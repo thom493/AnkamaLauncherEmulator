@@ -87,7 +87,7 @@ class MainWindow(QMainWindow):
         self._start_refresh_timer()
 
     def _setup_ui(self, accounts: list, all_interface: dict) -> None:
-        self.setWindowTitle("Ankama Launcher")
+        self.setWindowTitle("AnkAlt Launcher")
         self.setMinimumWidth(1080)
         self.resize(1240, 760)
         self.setStyleSheet(

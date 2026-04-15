@@ -51,6 +51,7 @@ class GuiShellTests(unittest.TestCase):
         )
         window.show()
         self.app.processEvents()
+        self.assertEqual(window.windowTitle(), "AnkAlt Launcher")
         self.assertTrue(window._sidebar.isVisible())
         self.assertTrue(window._top_bar.isVisible())
         self.assertTrue(hasattr(window, "_banner"))
@@ -93,3 +94,11 @@ class GuiShellTests(unittest.TestCase):
     def test_main_spec_references_app_icon(self):
         spec_text = Path("main.spec").read_text(encoding="utf-8")
         self.assertIn("icon='resources/app.ico'", spec_text)
+        self.assertIn("name='AnkAlt Launcher'", spec_text)
+
+    def test_windows_workflow_uses_ankalt_launcher_binary(self):
+        workflow_text = Path(".github/workflows/build-windows.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("name: AnkAlt-Launcher-windows", workflow_text)
+        self.assertIn("path: dist/AnkAlt Launcher.exe", workflow_text)

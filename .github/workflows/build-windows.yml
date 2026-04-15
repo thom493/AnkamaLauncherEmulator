@@ -29,5 +29,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AnkamaLauncherEmulator-windows
-          path: dist/main.exe
+          name: AnkAlt-Launcher-windows
+          path: dist/AnkAlt Launcher.exe

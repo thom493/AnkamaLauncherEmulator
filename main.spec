@@ -28,7 +28,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='main',
+    name='AnkAlt Launcher',
     icon='resources/app.ico',
     debug=False,
     bootloader_ignore_signals=False,
