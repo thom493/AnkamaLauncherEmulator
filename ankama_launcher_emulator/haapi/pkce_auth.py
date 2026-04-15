@@ -27,6 +27,7 @@ logger = logging.getLogger()
 
 AUTH_BASE = "https://auth.ankama.com"
 LOCAL_REDIRECT_URI = "http://127.0.0.1:9001/authorized"
+ZAAP_CLIENT_ID = 102  # Always 102 for PKCE auth (launcher ID, not game ID)
 CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 
 
@@ -42,13 +43,13 @@ def create_code_challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
 
 
-def build_auth_url(code_challenge: str, game_id: int = 102) -> str:
+def build_auth_url(code_challenge: str) -> str:
     """Build the auth URL the user opens in their browser."""
     return (
         f"{AUTH_BASE}/login/ankama"
         f"?code_challenge={code_challenge}"
         f"&redirect_uri={LOCAL_REDIRECT_URI}"
-        f"&client_id={game_id}"
+        f"&client_id={ZAAP_CLIENT_ID}"
         f"&direct=true"
         f"&origin_tracker=https://www.ankama-launcher.com/launcher"
     )
@@ -57,7 +58,6 @@ def build_auth_url(code_challenge: str, game_id: int = 102) -> str:
 def exchange_code_for_token(
     code: str,
     code_verifier: str,
-    game_id: int = 102,
     proxy_url: str | None = None,
 ) -> dict:
     """Exchange authorization code for access_token + refresh_token.
@@ -74,7 +74,7 @@ def exchange_code_for_token(
         f"grant_type=authorization_code"
         f"&code={code}"
         f"&redirect_uri={LOCAL_REDIRECT_URI}"
-        f"&client_id={game_id}"
+        f"&client_id={ZAAP_CLIENT_ID}"
         f"&code_verifier={code_verifier}"
     )
 
@@ -128,7 +128,7 @@ class PkceSession:
         self.proxy_url = proxy_url
         self.code_verifier = generate_code_verifier()
         self.code_challenge = create_code_challenge(self.code_verifier)
-        self.auth_url = build_auth_url(self.code_challenge, game_id)
+        self.auth_url = build_auth_url(self.code_challenge)
         self._server: HTTPServer | None = None
 
     def run_and_wait_for_code(self, timeout: float = 120) -> str | None:
@@ -160,6 +160,5 @@ class PkceSession:
         return exchange_code_for_token(
             code=code,
             code_verifier=self.code_verifier,
-            game_id=self.game_id,
             proxy_url=self.proxy_url,
         )
