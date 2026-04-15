@@ -1,12 +1,20 @@
 """Shield detection and HAAPI-based verification flow.
 
-All calls go through the proxy session so IP stays consistent.
+Matches the official Zaap launcher protocol:
+  1. Detect Shield via SignOnWithApiKey returning 403
+  2. PKCE re-login for fresh API key
+  3. GET /Shield/SecurityCode?transportType=EMAIL with fresh key
+  4. User enters email code
+  5. GET /Shield/ValidateCode?game_id=102&code=X&hm1=X&hm2=X&name=X
+  6. Store returned certificate
 """
 
+import getpass
 import logging
 
 import requests
 
+from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
 from ankama_launcher_emulator.haapi.urls import (
     ANKAMA_SHIELD_SECURITY_CODE,
     ANKAMA_SHIELD_VALIDATE_CODE,
@@ -28,10 +36,11 @@ class ShieldRequired(Exception):
         super().__init__(f"Shield verification required for {login} from proxy")
 
 
-def _make_proxy_session(proxy_url: str) -> requests.Session:
+def _make_session(proxy_url: str | None = None) -> requests.Session:
     session = requests.Session()
-    h_url = to_socks5h(proxy_url)
-    session.proxies = {"http": h_url, "https": h_url}
+    if proxy_url:
+        h_url = to_socks5h(proxy_url)
+        session.proxies = {"http": h_url, "https": h_url}
     hook_session(session)
     return session
 
@@ -51,7 +60,7 @@ def check_proxy_needs_shield(api_key: str, proxy_url: str, game_id: int = 102) -
 
     Returns True if Shield verification needed, False if proxy is already trusted.
     """
-    session = _make_proxy_session(proxy_url)
+    session = _make_session(proxy_url)
     try:
         response = session.post(
             "https://haapi.ankama.com/json/Ankama/v5/Account/SignOnWithApiKey",
@@ -68,95 +77,109 @@ def check_proxy_needs_shield(api_key: str, proxy_url: str, game_id: int = 102) -
         return True
 
 
+def get_account(api_key: str) -> dict:
+    """GET /Account/Account with the given API key.
+
+    Returns account info including 'security' field.
+    """
+    session = _make_session()
+    response = session.get(
+        "https://haapi.ankama.com/json/Ankama/v5/Account/Account",
+        headers=_zaap_headers(api_key),
+        verify=False,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def account_needs_shield(api_key: str) -> bool:
+    """Check if account's security field includes SHIELD."""
+    try:
+        account = get_account(api_key)
+        security = account.get("security", [])
+        needs = "SHIELD" in security or "UNSECURED" in security
+        logger.info(f"[SHIELD] Account security={security}, needs_shield={needs}")
+        return needs
+    except Exception as err:
+        logger.warning(f"[SHIELD] getAccount failed: {err}, assuming Shield needed")
+        return True
+
+
 def request_security_code(
     api_key: str,
-    proxy_url: str,
     transport_type: str = "EMAIL",
 ) -> dict:
     """Request Ankama to send a security code via email.
 
-    Tries GET with query params (API rejects POST with 405).
+    GET /Shield/SecurityCode?transportType=EMAIL
     Returns the response body dict on success.
-    Raises on failure with full response details for debugging.
     """
-    session = _make_proxy_session(proxy_url)
+    session = _make_session()
     headers = _zaap_headers(api_key)
 
-    attempts = [
-        {"transportType": transport_type},
-        {"transport_type": transport_type},
-        {},
-    ]
-
-    last_response = None
-    for params in attempts:
-        response = session.get(
-            ANKAMA_SHIELD_SECURITY_CODE,
-            params=params,
-            headers=headers,
-            verify=False,
-        )
-        last_response = response
-        logger.info(
-            f"[SHIELD] SecurityCode attempt params={params}: "
-            f"status={response.status_code} body={response.text[:500]}"
-        )
-        if response.status_code == 200:
-            try:
-                return response.json()
-            except ValueError:
-                return {"status": "ok", "raw": response.text}
-
-    # All attempts failed — raise with details for debugging
-    assert last_response is not None
-    raise requests.exceptions.HTTPError(
-        f"Shield SecurityCode failed: {last_response.status_code} — "
-        f"{last_response.text[:500]}",
-        response=last_response,
+    response = session.get(
+        ANKAMA_SHIELD_SECURITY_CODE,
+        params={"transportType": transport_type},
+        headers=headers,
+        verify=False,
     )
+    logger.info(
+        f"[SHIELD] SecurityCode: status={response.status_code} "
+        f"body={response.text[:500]}"
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def validate_security_code(
     api_key: str,
-    proxy_url: str,
     code: str,
+    game_id: int = 102,
 ) -> dict:
-    """Validate the security code the user received via email.
+    """Validate the security code with full params matching official launcher.
 
-    Tries GET with query params (API rejects POST with 405).
-    Returns response body dict on success.
-    Raises on failure with full response details.
+    GET /Shield/ValidateCode?game_id=102&code=X&hm1=X&hm2=X&name=launcher-USER
+    Returns certificate data on success.
     """
-    session = _make_proxy_session(proxy_url)
+    session = _make_session()
     headers = _zaap_headers(api_key)
+    hm1, hm2 = CryptoHelper.createHmEncoders()
+    username = getpass.getuser()
 
-    attempts = [
-        {"code": code},
-        {"validationCode": code},
-    ]
+    params = {
+        "game_id": game_id,
+        "code": code,
+        "hm1": hm1,
+        "hm2": hm2,
+        "name": f"launcher-{username}",
+    }
 
-    last_response = None
-    for params in attempts:
-        response = session.get(
-            ANKAMA_SHIELD_VALIDATE_CODE,
-            params=params,
-            headers=headers,
-            verify=False,
-        )
-        last_response = response
-        logger.info(
-            f"[SHIELD] ValidateCode attempt params={params}: "
-            f"status={response.status_code} body={response.text[:500]}"
-        )
-        if response.status_code == 200:
-            try:
-                return response.json()
-            except ValueError:
-                return {"status": "ok", "raw": response.text}
-
-    assert last_response is not None
-    raise requests.exceptions.HTTPError(
-        f"Shield ValidateCode failed: {last_response.status_code} — "
-        f"{last_response.text[:500]}",
-        response=last_response,
+    response = session.get(
+        ANKAMA_SHIELD_VALIDATE_CODE,
+        params=params,
+        headers=headers,
+        verify=False,
     )
+    logger.info(
+        f"[SHIELD] ValidateCode: status={response.status_code} "
+        f"body={response.text[:500]}"
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def store_shield_certificate(login: str, cert_data: dict) -> None:
+    """Store the certificate returned by ValidateCode."""
+    import os
+
+    from ankama_launcher_emulator.consts import CERTIFICATE_FOLDER_PATH
+    from ankama_launcher_emulator.decrypter.device import Device
+
+    cert_data["login"] = login
+    file_path = os.path.join(
+        CERTIFICATE_FOLDER_PATH,
+        ".certif" + CryptoHelper.createHashFromStringSha(login),
+    )
+    uuid = Device.getUUID()
+    CryptoHelper.encryptToFile(file_path, cert_data, uuid)
+    logger.info(f"[SHIELD] Certificate stored for {login}")

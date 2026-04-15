@@ -46,8 +46,10 @@ from ankama_launcher_emulator.gui.utils import run_in_background
 from ankama_launcher_emulator.haapi.pkce_auth import PkceSession
 from ankama_launcher_emulator.haapi.shield import (
     ShieldRequired,
+    account_needs_shield,
     check_proxy_needs_shield,
     request_security_code,
+    store_shield_certificate,
     validate_security_code,
 )
 from ankama_launcher_emulator.server.server import AnkamaLauncherServer
@@ -298,61 +300,58 @@ class MainWindow(QMainWindow):
         card: AccountCard,
         set_panel_status: Callable[[str], None],
     ) -> None:
-        # Step 1: PKCE login via system browser (GUI thread)
-        import webbrowser
-
+        # Step 1: PKCE login with local callback server (background thread)
         pkce = PkceSession(game_id=err.game_id, proxy_url=err.proxy_url)
-        webbrowser.open(pkce.auth_url)
+        set_panel_status("Opening browser for authentication...")
 
-        # Browser redirects to zaap://login?code=XXX which fails to navigate.
-        # User copies the code from the URL bar and pastes it here.
-        dialog = ShieldCodeDialog(
-            err.login,
-            parent=self,
-            message=(
-                f"A browser window opened for {err.login}.\n\n"
-                "1. Log in with your Ankama credentials.\n"
-                "2. After login, your browser will try to open zaap://login?code=...\n"
-                "3. Copy the 'code' value from the URL bar.\n"
-                "4. Paste it below."
-            ),
-            placeholder="Paste authorization code from URL",
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            card.set_launch_enabled(True)
-            return
-
-        auth_code = dialog.get_code()
-        if not auth_code:
-            self._show_error("No authorization code provided")
-            card.set_launch_enabled(True)
-            return
-
-        # Step 2: Exchange code → fresh API key, request Shield code, show dialog
-        def exchange_and_request(on_progress: Callable) -> str:
+        def pkce_flow(on_progress: Callable) -> dict:
+            on_progress("Waiting for browser login...")
+            auth_code = pkce.run_and_wait_for_code(timeout=120)
+            if not auth_code:
+                raise RuntimeError("No authorization code received (timeout)")
             on_progress("Exchanging authorization code...")
-            fresh_key = pkce.exchange(auth_code)
-            logger.info("[SHIELD] PKCE exchange successful, requesting security code")
-            on_progress("Requesting security code...")
-            result = request_security_code(fresh_key, err.proxy_url)
-            logger.info(f"[SHIELD] SecurityCode response: {result}")
-            return fresh_key
+            tokens = pkce.exchange(auth_code)
+            fresh_key = tokens["access_token"]
+            logger.info("[SHIELD] PKCE exchange successful")
 
-        def on_key_ready(result: object) -> None:
-            fresh_key = str(result)
+            # Check if account actually needs Shield
+            on_progress("Checking account security...")
+            if not account_needs_shield(fresh_key):
+                logger.info("[SHIELD] Account does not need Shield, retrying launch")
+                on_progress("Launching...")
+                return {
+                    "needs_shield": False,
+                    "fresh_key": fresh_key,
+                    "pid": launch(
+                        err.login, None, err.proxy_url, on_progress=on_progress
+                    ),
+                }
+
+            on_progress("Requesting security code via email...")
+            request_security_code(fresh_key)
+            logger.info("[SHIELD] Security code requested via email")
+            return {"needs_shield": True, "fresh_key": fresh_key}
+
+        def on_pkce_done(result: object) -> None:
+            data = cast(dict, result)
+            if not data["needs_shield"]:
+                self._show_success(f"Game launch for {err.login}")
+                set_panel_status("")
+                card.set_running(data["pid"])
+                return
             self._show_shield_code_dialog(
-                err, fresh_key, launch, card, set_panel_status
+                err, data["fresh_key"], launch, card, set_panel_status
             )
 
-        def on_exchange_error(exc: object) -> None:
+        def on_pkce_error(exc: object) -> None:
             self._show_error(f"Shield auth failed: {exc}")
             set_panel_status("")
             card.set_launch_enabled(True)
 
         run_in_background(
-            exchange_and_request,
-            on_success=on_key_ready,
-            on_error=on_exchange_error,
+            pkce_flow,
+            on_success=on_pkce_done,
+            on_error=on_pkce_error,
             on_progress=set_panel_status,
             parent=self,
         )
@@ -365,7 +364,14 @@ class MainWindow(QMainWindow):
         card: AccountCard,
         set_panel_status: Callable[[str], None],
     ) -> None:
-        dialog = ShieldCodeDialog(err.login, parent=self)
+        dialog = ShieldCodeDialog(
+            err.login,
+            parent=self,
+            message=(
+                f"A security code was sent to the email for {err.login}.\n"
+                "Enter the code below to verify this device."
+            ),
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             card.set_launch_enabled(True)
             return
@@ -375,11 +381,12 @@ class MainWindow(QMainWindow):
             card.set_launch_enabled(True)
             return
 
-        # Step 3: Validate code + retry launch (background thread)
         def validate_and_launch(on_progress: Callable) -> int:
             on_progress("Validating security code...")
-            result = validate_security_code(fresh_key, err.proxy_url, code)
-            logger.info(f"[SHIELD] ValidateCode response: {result}")
+            cert_data = validate_security_code(fresh_key, code, err.game_id)
+            logger.info(f"[SHIELD] ValidateCode success")
+            on_progress("Storing certificate...")
+            store_shield_certificate(err.login, cert_data)
             on_progress("Shield validated, launching...")
             self._proxy_store.save_validated(err.login, err.proxy_url)
             return launch(
