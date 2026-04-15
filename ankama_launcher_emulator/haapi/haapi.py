@@ -7,6 +7,7 @@ import requests
 import urllib3
 
 from ankama_launcher_emulator.utils.internet import InterfaceAdapter
+from ankama_launcher_emulator.utils.proxy import to_socks5h
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -53,9 +54,10 @@ class Haapi:
     def __post_init__(self):
         self.zaap_session = requests.Session()
         if self.proxy_url:
+            h_url = to_socks5h(self.proxy_url)
             self.zaap_session.proxies = {
-                "http": self.proxy_url,
-                "https": self.proxy_url,
+                "http": h_url,
+                "https": h_url,
             }
         if self.interface_ip:
             adapter = InterfaceAdapter(self.interface_ip)

@@ -90,7 +90,7 @@ class RetroServer(Thread):
                 port=self.socks5_port,
                 username=self.socks5_username,
                 password=self.socks5_password,
-                rdns=False,
+                rdns=True,
             )
         else:
             remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

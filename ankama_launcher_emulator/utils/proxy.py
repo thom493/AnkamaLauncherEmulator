@@ -8,6 +8,13 @@ from ankama_launcher_emulator.proxy.dofus3.proxy_listener import ProxyListener
 logger = logging.getLogger()
 
 
+def to_socks5h(proxy_url: str) -> str:
+    """Convert socks5:// to socks5h:// for remote DNS resolution."""
+    if proxy_url.startswith("socks5://"):
+        return "socks5h://" + proxy_url[len("socks5://") :]
+    return proxy_url
+
+
 def validation_proxy_url(proxy_url: str | None) -> bool:
     if not proxy_url:
         return True
@@ -17,7 +24,8 @@ def validation_proxy_url(proxy_url: str | None) -> bool:
 def verify_proxy_ip(proxy_url: str, timeout: int = 10) -> str:
     """Check proxy is reachable and return its exit IP. Raises on failure."""
     session = requests.Session()
-    session.proxies = {"http": proxy_url, "https": proxy_url}
+    h_url = to_socks5h(proxy_url)
+    session.proxies = {"http": h_url, "https": h_url}
     try:
         response = session.get("https://api.ipify.org", timeout=timeout)
         response.raise_for_status()
