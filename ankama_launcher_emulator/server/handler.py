@@ -6,6 +6,7 @@ from threading import Timer
 from ankama_launcher_emulator.decrypter.crypto_helper import (
     CryptoHelper,
 )
+from ankama_launcher_emulator.haapi.account_meta import AccountMeta
 from ankama_launcher_emulator.haapi.haapi import (
     get_account_info_by_login,
 )
@@ -61,7 +62,12 @@ class AnkamaLauncherHandler:
             certificate_datas = CryptoHelper.getStoredCertificate(login)["certificate"]
         except FileNotFoundError:
             certificate_datas = None
-        return self.infos_by_hash[hash].haapi.createToken(gameId, certificate_datas)
+        meta = AccountMeta()
+        hm1 = meta.get_hm1(login)
+        hm2 = meta.get_hm2(login)
+        return self.infos_by_hash[hash].haapi.createToken(
+            gameId, certificate_datas, hm1=hm1, hm2=hm2
+        )
 
     @retry_internet
     def updater_isUpdateAvailable(self, gameSession: str):

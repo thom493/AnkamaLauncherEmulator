@@ -103,13 +103,21 @@ class Haapi:
             logger.warning(f"[HAAPI] RefreshApiKey failed ({err}), continuing anyway")
 
     @retry_internet
-    def createToken(self, game_id: int, certif: DecipheredCertifDatas | None) -> str:
+    def createToken(
+        self,
+        game_id: int,
+        certif: DecipheredCertifDatas | None,
+        hm1: str | None = None,
+        hm2: str | None = None,
+    ) -> str:
         self.refreshApiKey()
         url = ANKAMA_ACCOUNT_CREATE_TOKEN
         params: dict = {"game": game_id}
         if certif:
             params["certificate_id"] = certif["id"]
-            params["certificate_hash"] = CryptoHelper.generateHashFromCertif(certif)
+            params["certificate_hash"] = CryptoHelper.generateHashFromCertif(
+                certif, hm1=hm1, hm2=hm2
+            )
         response = self.zaap_session.get(url, params=params, verify=False)
         response.raise_for_status()
         body = response.json()

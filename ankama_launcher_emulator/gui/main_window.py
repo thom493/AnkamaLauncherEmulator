@@ -1,5 +1,4 @@
 import logging
-from dataclasses import dataclass, field
 from typing import Callable, cast
 
 from PyQt6.QtCore import Qt, QTimer
@@ -9,7 +8,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QScrollArea,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -17,6 +15,7 @@ from qfluentwidgets import (
     BodyLabel,
     InfoBar,
     InfoBarPosition,
+    PushButton,
     TitleLabel,
 )
 
@@ -37,6 +36,7 @@ from ankama_launcher_emulator.gui.consts import (
 )
 from ankama_launcher_emulator.gui.download_banner import DownloadBanner
 from ankama_launcher_emulator.gui.game_selector_card import GameSelectorCard
+from ankama_launcher_emulator.gui.proxy_dialog import ProxyDialog
 from ankama_launcher_emulator.gui.shield_dialog import ShieldCodeDialog
 from ankama_launcher_emulator.gui.star_dialog import (
     StarBar,
@@ -60,18 +60,6 @@ from ankama_launcher_emulator.utils.proxy_store import ProxyStore
 logger = logging.getLogger()
 
 
-@dataclass
-class GamePageState:
-    cards: list[AccountCard] = field(default_factory=list)
-    layout: QVBoxLayout | None = None
-    set_panel_status: Callable[[str], None] | None = None
-
-    def reset(self) -> None:
-        self.cards = []
-        self.layout = None
-        self.set_panel_status = None
-
-
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -84,10 +72,8 @@ class MainWindow(QMainWindow):
         self._accounts: list = accounts
         self._interfaces: dict[str, tuple[str, str]] = all_interface
         self._proxy_store = ProxyStore()
-        self._pages: dict[bool, GamePageState] = {
-            True: GamePageState(),
-            False: GamePageState(),
-        }
+        self._cards: list[AccountCard] = []
+        self._current_game_is_dofus3: bool = DOFUS_INSTALLED or not RETRO_INSTALLED
         self._is_refreshing = False
         self._setup_ui(accounts, all_interface)
         self._start_refresh_timer()
@@ -107,16 +93,9 @@ class MainWindow(QMainWindow):
         if not has_shown_star_repo():
             layout.addWidget(StarBar())
 
-        if not accounts:
-            label = BodyLabel(
-                f"No account found.\n"
-                f"Check that ankama launcher is installed et have logged account.\n"
-                f"Expected path : {ZAAP_PATH}/keydata/"
-            )
-            label.setStyleSheet(f"color: {RED_HEXA};")
-            label.setWordWrap(True)
-            layout.addWidget(label)
-            return
+        # Header row: [Dofus 3] [Retro] ... [Gear] [+ Add]
+        header_row = QHBoxLayout()
+        header_row.setSpacing(12)
 
         self._dofus_selector = GameSelectorCard(
             DOFUS_3_TITLE, RESOURCES / "Dofus3.png", False, available=DOFUS_INSTALLED
@@ -127,16 +106,24 @@ class MainWindow(QMainWindow):
             False,
             available=RETRO_INSTALLED,
         )
-        self._dofus_selector.clicked.connect(lambda: self._select_game(is_dofus_3=True))
-        self._retro_selector.clicked.connect(
-            lambda: self._select_game(is_dofus_3=False)
-        )
+        self._dofus_selector.clicked.connect(lambda: self._select_game(True))
+        self._retro_selector.clicked.connect(lambda: self._select_game(False))
 
-        selector_row = QHBoxLayout()
-        selector_row.setSpacing(12)
-        selector_row.addWidget(self._dofus_selector)
-        selector_row.addWidget(self._retro_selector)
-        layout.addLayout(selector_row)
+        header_row.addWidget(self._dofus_selector)
+        header_row.addWidget(self._retro_selector)
+        header_row.addStretch()
+
+        gear_btn = PushButton("Proxies")
+        gear_btn.setFixedWidth(80)
+        gear_btn.clicked.connect(self._open_proxy_dialog)
+        header_row.addWidget(gear_btn)
+
+        add_btn = PushButton("+ Add")
+        add_btn.setFixedWidth(80)
+        add_btn.clicked.connect(self._open_add_account_dialog)
+        header_row.addWidget(add_btn)
+
+        layout.addLayout(header_row)
 
         if not CYTRUS_INSTALLED:
             cytrus_warning = BodyLabel(
@@ -147,147 +134,114 @@ class MainWindow(QMainWindow):
             cytrus_warning.setWordWrap(True)
             layout.addWidget(cytrus_warning)
 
-        self._title_label = TitleLabel(DOFUS_3_TITLE)
+        self._title_label = TitleLabel(
+            DOFUS_3_TITLE if self._current_game_is_dofus3 else DOFUS_RETRO_TITLE
+        )
         self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._title_label)
 
-        self._stack = QStackedWidget()
-        self._dofus_page = (
-            self._make_game_page(
-                accounts, all_interface, self._launch_dofus, is_dofus_3=True
+        # Banner for status messages
+        self._banner = DownloadBanner()
+        layout.addWidget(self._banner)
+
+        if not accounts:
+            label = BodyLabel(
+                f"No account found.\n"
+                f"Check that ankama launcher is installed and has logged accounts.\n"
+                f"Expected path : {ZAAP_PATH}/keydata/\n\n"
+                f"Or click '+ Add' to add an account manually."
             )
-            if DOFUS_INSTALLED
-            else self._make_unavailable_page(DOFUS_3_TITLE)
-        )
-        self._retro_page = (
-            self._make_game_page(
-                accounts, all_interface, self._launch_retro, is_dofus_3=False
-            )
-            if RETRO_INSTALLED
-            else self._make_unavailable_page(DOFUS_RETRO_TITLE)
-        )
-        self._stack.addWidget(self._dofus_page)
-        self._stack.addWidget(self._retro_page)
-        layout.addWidget(self._stack)
+            label.setStyleSheet(f"color: {RED_HEXA};")
+            label.setWordWrap(True)
+            layout.addWidget(label)
+            self._no_account_label = label
+        else:
+            self._no_account_label = None
 
-        self._select_game(DOFUS_INSTALLED or not RETRO_INSTALLED)
-
-    def _select_game(self, is_dofus_3: bool) -> None:
-        self._title_label.setText(DOFUS_3_TITLE if is_dofus_3 else DOFUS_RETRO_TITLE)
-        self._dofus_selector.set_active(is_dofus_3)
-        self._retro_selector.set_active(not is_dofus_3)
-        self._stack.setCurrentWidget(
-            self._dofus_page if is_dofus_3 else self._retro_page
-        )
-
-    def _make_game_page(
-        self,
-        accounts: list,
-        all_interface: dict,
-        launch: Callable,
-        is_dofus_3: bool = True,
-    ) -> QWidget:
-        page = QWidget()
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 4, 0, 0)
-        page_layout.setSpacing(4)
-
+        # Single scroll area with all account cards
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
 
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        banner = DownloadBanner()
-        cards: list[AccountCard] = []
-
-        def set_panel_status(text: str) -> None:
-            was_visible = banner.isVisible()
-            banner.set_status(text)
-            if not text:
-                for card in cards:
-                    card.set_launch_enabled(True)
-            elif not was_visible:
-                for card in cards:
-                    card.set_launch_enabled(False)
+        self._card_container = QWidget()
+        self._card_layout = QVBoxLayout(self._card_container)
+        self._card_layout.setContentsMargins(0, 0, 0, 0)
+        self._card_layout.setSpacing(8)
 
         for account in accounts:
-            login = account["apikey"]["login"]
-            card = AccountCard(login, all_interface, container)
-            saved_proxy = self._proxy_store.get_proxy(login)
-            if saved_proxy:
-                card.set_proxy(saved_proxy)
-            cards.append(card)
-            card.launch_requested.connect(
-                self._make_launch_handler(launch, login, card, set_panel_status)
-            )
-            card.error_occurred.connect(self._show_error)
-            layout.addWidget(card)
+            self._add_card(account, all_interface)
 
-        layout.addStretch()
-        scroll.setWidget(container)
-        page_layout.addWidget(banner)
-        page_layout.addWidget(scroll, 1)
+        self._card_layout.addStretch()
+        scroll.setWidget(self._card_container)
+        layout.addWidget(scroll, 1)
 
-        state = self._pages[is_dofus_3]
-        state.cards = cards
-        state.layout = layout
-        state.set_panel_status = set_panel_status
+        self._select_game(self._current_game_is_dofus3)
 
-        return page
+    def _select_game(self, is_dofus_3: bool) -> None:
+        self._current_game_is_dofus3 = is_dofus_3
+        self._title_label.setText(DOFUS_3_TITLE if is_dofus_3 else DOFUS_RETRO_TITLE)
+        self._dofus_selector.set_active(is_dofus_3)
+        self._retro_selector.set_active(not is_dofus_3)
 
-    def _make_unavailable_page(self, game_title: str) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    def _current_launch_fn(self) -> Callable:
+        if self._current_game_is_dofus3:
+            return self._launch_dofus
+        return self._launch_retro
 
-        label = BodyLabel(
-            f"{game_title} client not found.\n"
-            f"Install game via Ankama launcher then relaunch application."
+    def _add_card(self, account: dict, all_interface: dict) -> AccountCard:
+        login = account["apikey"]["login"]
+        card = AccountCard(
+            login, all_interface, self._proxy_store, self._card_container
         )
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setWordWrap(True)
-        label.setStyleSheet(f"color: {RED_HEXA};")
-        layout.addWidget(label)
-        return page
+        self._cards.append(card)
+        card.launch_requested.connect(self._make_launch_handler(login, card))
+        card.error_occurred.connect(self._show_error)
+        self._card_layout.insertWidget(self._card_layout.count() - 1, card)
+        return card
+
+    def _set_panel_status(self, text: str) -> None:
+        was_visible = self._banner.isVisible()
+        self._banner.set_status(text)
+        if not text:
+            for card in self._cards:
+                card.set_launch_enabled(True)
+        elif not was_visible:
+            for card in self._cards:
+                card.set_launch_enabled(False)
 
     def _make_launch_handler(
         self,
-        launch: Callable,
         login: str,
         card: AccountCard,
-        set_panel_status: Callable[[str], None],
     ) -> Callable[[object, object], None]:
-        def handler(iface: object, proxy: object) -> None:
+        def handler(iface: object, proxy_id: object) -> None:
+            launch = self._current_launch_fn()
+            proxy_url = self._proxy_store.get_proxy_url(login) if proxy_id else None
+
             def on_success(result: object) -> None:
                 self._show_success(f"Game launch for {login}")
-                set_panel_status("")
+                self._set_panel_status("")
                 card.set_running(int(result))  # type: ignore[arg-type]
-                if proxy:
-                    self._proxy_store.save_validated(login, str(proxy), exit_ip=None)
 
             def on_error(err: object) -> None:
                 if isinstance(err, ShieldRequired):
-                    set_panel_status("")
-                    self._handle_shield(err, launch, card, set_panel_status)
+                    self._set_panel_status("")
+                    self._handle_shield(err, launch, card)
                     return
                 self._show_error(str(err))
-                set_panel_status("")
+                self._set_panel_status("")
                 card.set_launch_enabled(True)
 
             run_in_background(
                 lambda on_progress: launch(
                     login,
                     cast(str | None, iface),
-                    cast(str | None, proxy),
+                    proxy_url,
                     on_progress=on_progress,
                 ),
                 on_success=on_success,
                 on_error=on_error,
-                on_progress=set_panel_status,
+                on_progress=self._set_panel_status,
                 parent=self,
             )
 
@@ -298,11 +252,9 @@ class MainWindow(QMainWindow):
         err: ShieldRequired,
         launch: Callable,
         card: AccountCard,
-        set_panel_status: Callable[[str], None],
     ) -> None:
-        # Step 1: PKCE login with local callback server (background thread)
-        pkce = PkceSession(game_id=err.game_id)
-        set_panel_status("Opening browser for authentication...")
+        pkce = PkceSession()
+        self._set_panel_status("Opening browser for authentication...")
 
         def pkce_flow(on_progress: Callable) -> dict:
             on_progress("Waiting for browser login...")
@@ -314,7 +266,6 @@ class MainWindow(QMainWindow):
             fresh_key = tokens["access_token"]
             logger.info("[SHIELD] PKCE exchange successful")
 
-            # Check if account actually needs Shield
             on_progress("Checking account security...")
             if not account_needs_shield(fresh_key):
                 logger.info("[SHIELD] Account does not need Shield, retrying launch")
@@ -336,23 +287,21 @@ class MainWindow(QMainWindow):
             data = cast(dict, result)
             if not data["needs_shield"]:
                 self._show_success(f"Game launch for {err.login}")
-                set_panel_status("")
+                self._set_panel_status("")
                 card.set_running(data["pid"])
                 return
-            self._show_shield_code_dialog(
-                err, data["fresh_key"], launch, card, set_panel_status
-            )
+            self._show_shield_code_dialog(err, data["fresh_key"], launch, card)
 
         def on_pkce_error(exc: object) -> None:
             self._show_error(f"Shield auth failed: {exc}")
-            set_panel_status("")
+            self._set_panel_status("")
             card.set_launch_enabled(True)
 
         run_in_background(
             pkce_flow,
             on_success=on_pkce_done,
             on_error=on_pkce_error,
-            on_progress=set_panel_status,
+            on_progress=self._set_panel_status,
             parent=self,
         )
 
@@ -362,7 +311,6 @@ class MainWindow(QMainWindow):
         fresh_key: str,
         launch: Callable,
         card: AccountCard,
-        set_panel_status: Callable[[str], None],
     ) -> None:
         dialog = ShieldCodeDialog(
             err.login,
@@ -383,8 +331,8 @@ class MainWindow(QMainWindow):
 
         def validate_and_launch(on_progress: Callable) -> int:
             on_progress("Validating security code...")
-            cert_data = validate_security_code(fresh_key, code, err.game_id)
-            logger.info(f"[SHIELD] ValidateCode success")
+            cert_data = validate_security_code(fresh_key, code)
+            logger.info("[SHIELD] ValidateCode success")
             on_progress("Storing certificate...")
             store_shield_certificate(err.login, cert_data)
             on_progress("Shield validated, launching...")
@@ -398,19 +346,19 @@ class MainWindow(QMainWindow):
 
         def on_success(result: object) -> None:
             self._show_success(f"Game launch for {err.login}")
-            set_panel_status("")
+            self._set_panel_status("")
             card.set_running(int(result))  # type: ignore[arg-type]
 
         def on_error(retry_err: object) -> None:
             self._show_error(str(retry_err))
-            set_panel_status("")
+            self._set_panel_status("")
             card.set_launch_enabled(True)
 
         run_in_background(
             validate_and_launch,
             on_success=on_success,
             on_error=on_error,
-            on_progress=set_panel_status,
+            on_progress=self._set_panel_status,
             parent=self,
         )
 
@@ -418,15 +366,14 @@ class MainWindow(QMainWindow):
         self,
         login: str,
         proxy_url: str,
-        game_id: int,
         on_progress: Callable[[str], None] | None,
     ) -> None:
         """Check if proxy IP needs Shield verification. Raises ShieldRequired if so."""
         if on_progress:
             on_progress("Checking proxy authorization...")
         api_key = CryptoHelper.getStoredApiKey(login)["apikey"]["key"]
-        if check_proxy_needs_shield(api_key, proxy_url, game_id):
-            raise ShieldRequired(login, proxy_url, game_id)
+        if check_proxy_needs_shield(api_key, proxy_url):
+            raise ShieldRequired(login, proxy_url)
 
     def _launch_dofus(
         self,
@@ -441,7 +388,7 @@ class MainWindow(QMainWindow):
             if on_progress:
                 on_progress("Verifying proxy...")
             verify_proxy_ip(proxy_url)
-            self._check_shield(login, proxy_url, 102, on_progress)
+            self._check_shield(login, proxy_url, on_progress)
         return self._server.launch_dofus(
             login,
             proxy_listener=proxy_listener,
@@ -462,13 +409,30 @@ class MainWindow(QMainWindow):
             if on_progress:
                 on_progress("Verifying proxy...")
             verify_proxy_ip(proxy_url)
-            self._check_shield(login, proxy_url, 101, on_progress)
+            self._check_shield(login, proxy_url, on_progress)
         return self._server.launch_retro(
             login,
             proxy_url=proxy_url,
             interface_ip=interface_ip,
             on_progress=on_progress,
         )
+
+    # --- Dialogs ---
+
+    def _open_proxy_dialog(self) -> None:
+        dialog = ProxyDialog(self._proxy_store, parent=self)
+        dialog.exec()
+        for card in self._cards:
+            card.update_proxies()
+
+    def _open_add_account_dialog(self) -> None:
+        from ankama_launcher_emulator.gui.add_account_dialog import AddAccountDialog
+
+        dialog = AddAccountDialog(self._proxy_store, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._schedule_refresh()
+
+    # --- Info bars ---
 
     def _show_success(self, msg: str) -> None:
         InfoBar.success(
@@ -479,6 +443,8 @@ class MainWindow(QMainWindow):
         InfoBar.error(
             "", msg, duration=6000, position=InfoBarPosition.TOP_RIGHT, parent=self
         )
+
+    # --- Refresh timer ---
 
     def _start_refresh_timer(self) -> None:
         self._refresh_timer = QTimer(self)
@@ -514,67 +480,29 @@ class MainWindow(QMainWindow):
         new_logins: set[str] = {acc["apikey"]["login"] for acc in new_accounts}
 
         if current_logins != new_logins:
-            if not self._accounts and new_accounts:
-                self._accounts = new_accounts
-                self._interfaces = new_interfaces
-                for state in self._pages.values():
-                    state.reset()
-                self._setup_ui(new_accounts, new_interfaces)
-                return
+            # Hide no-account label if we now have accounts
+            if self._no_account_label and new_accounts:
+                self._no_account_label.hide()
+                self._no_account_label = None
 
-            launches = {True: self._launch_dofus, False: self._launch_retro}
+            # Add new accounts
             for account in new_accounts:
                 login = account["apikey"]["login"]
-                if login in current_logins:
-                    continue
-                for is_dofus_3, state in self._pages.items():
-                    if state.layout is None:
-                        continue
-                    self._add_account_to_page(
-                        account, new_interfaces, state, launches[is_dofus_3]
-                    )
+                if login not in current_logins:
+                    self._add_card(account, new_interfaces)
 
+            # Remove departed accounts
             for login in current_logins - new_logins:
-                for state in self._pages.values():
-                    if state.layout is None:
-                        continue
-                    self._remove_account_from_page(login, state)
+                for card in self._cards[:]:
+                    if card.login == login and not card.is_running:
+                        self._card_layout.removeWidget(card)
+                        card.hide()
+                        card.deleteLater()
+                        self._cards.remove(card)
 
             self._accounts = new_accounts
 
         if new_interfaces != self._interfaces:
-            all_cards = [card for state in self._pages.values() for card in state.cards]
-            for card in all_cards:
+            for card in self._cards:
                 card.update_interfaces(new_interfaces)
             self._interfaces = new_interfaces
-
-    def _add_account_to_page(
-        self,
-        account: dict,
-        all_interface: dict,
-        state: GamePageState,
-        launch: Callable,
-    ) -> None:
-        assert state.layout is not None
-        login = account["apikey"]["login"]
-        card = AccountCard(login, all_interface)
-        saved_proxy = self._proxy_store.get_proxy(login)
-        if saved_proxy:
-            card.set_proxy(saved_proxy)
-        state.cards.append(card)
-        card.launch_requested.connect(
-            self._make_launch_handler(
-                launch, login, card, state.set_panel_status or (lambda _: None)
-            )
-        )
-        card.error_occurred.connect(self._show_error)
-        state.layout.insertWidget(state.layout.count() - 1, card)
-
-    def _remove_account_from_page(self, login: str, state: GamePageState) -> None:
-        assert state.layout is not None
-        for card in state.cards[:]:
-            if card.login == login and not card.is_running:
-                state.layout.removeWidget(card)
-                card.hide()
-                card.deleteLater()
-                state.cards.remove(card)

@@ -29,10 +29,9 @@ logger = logging.getLogger()
 class ShieldRequired(Exception):
     """Raised when proxy IP needs Shield verification."""
 
-    def __init__(self, login: str, proxy_url: str, game_id: int):
+    def __init__(self, login: str, proxy_url: str):
         self.login = login
         self.proxy_url = proxy_url
-        self.game_id = game_id
         super().__init__(f"Shield verification required for {login} from proxy")
 
 
@@ -55,7 +54,7 @@ def _zaap_headers(api_key: str) -> dict:
     }
 
 
-def check_proxy_needs_shield(api_key: str, proxy_url: str, game_id: int = 102) -> bool:
+def check_proxy_needs_shield(api_key: str, proxy_url: str) -> bool:
     """Test if proxy IP triggers Shield by calling SignOnWithApiKey.
 
     Returns True if Shield verification needed, False if proxy is already trusted.
@@ -64,7 +63,7 @@ def check_proxy_needs_shield(api_key: str, proxy_url: str, game_id: int = 102) -
     try:
         response = session.post(
             "https://haapi.ankama.com/json/Ankama/v5/Account/SignOnWithApiKey",
-            json={"game": game_id},
+            json={"game": 102},
             headers=_zaap_headers(api_key),
             verify=False,
         )
@@ -134,20 +133,24 @@ def request_security_code(
 def validate_security_code(
     api_key: str,
     code: str,
-    game_id: int = 102,
+    hm1: str | None = None,
+    hm2: str | None = None,
 ) -> dict:
     """Validate the security code with full params matching official launcher.
 
     GET /Shield/ValidateCode?game_id=102&code=X&hm1=X&hm2=X&name=launcher-USER
     Returns certificate data on success.
+
+    If hm1/hm2 not provided, uses machine-derived values.
     """
     session = _make_session()
     headers = _zaap_headers(api_key)
-    hm1, hm2 = CryptoHelper.createHmEncoders()
+    if not hm1 or not hm2:
+        hm1, hm2 = CryptoHelper.createHmEncoders()
     username = getpass.getuser()
 
     params = {
-        "game_id": game_id,
+        "game_id": 102,
         "code": code,
         "hm1": hm1,
         "hm2": hm2,

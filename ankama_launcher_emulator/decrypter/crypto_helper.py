@@ -124,8 +124,13 @@ class CryptoHelper:
         return hm1, hm2
 
     @staticmethod
-    def generateHashFromCertif(certif: DecipheredCertifDatas):
-        hm1, hm2 = CryptoHelper.createHmEncoders()
+    def generateHashFromCertif(
+        certif: DecipheredCertifDatas,
+        hm1: str | None = None,
+        hm2: str | None = None,
+    ):
+        if not hm1 or not hm2:
+            hm1, hm2 = CryptoHelper.createHmEncoders()
 
         decipher = AES.new(hm2.encode(), AES.MODE_ECB)
 

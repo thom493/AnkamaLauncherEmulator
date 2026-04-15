@@ -5,27 +5,32 @@ from qfluentwidgets import (
     BodyLabel,
     CardWidget,
     ComboBox,
-    LineEdit,
     PrimaryPushButton,
     PushButton,
 )
 
 from ankama_launcher_emulator.gui.consts import GREEN_HEXA
 from ankama_launcher_emulator.gui.utils import run_in_background
-from ankama_launcher_emulator.utils.proxy import validation_proxy_url, verify_proxy_ip
+from ankama_launcher_emulator.utils.proxy import verify_proxy_ip
+from ankama_launcher_emulator.utils.proxy_store import ProxyEntry, ProxyStore
 
 
 class AccountCard(CardWidget):
     launch_requested = pyqtSignal(
         object, object
-    )  # (interface_ip: str | None, proxy_url: str | None)
+    )  # (interface_ip: str | None, proxy_id: str | None)
     error_occurred = pyqtSignal(str)
 
     def __init__(
-        self, login: str, all_interface: dict[str, tuple[str, str]], parent=None
+        self,
+        login: str,
+        all_interface: dict[str, tuple[str, str]],
+        proxy_store: ProxyStore,
+        parent=None,
     ):
         super().__init__(parent)
         self.login = login
+        self._proxy_store = proxy_store
         self._current_pid: int | None = None
         self._setup_ui(all_interface)
 
@@ -59,10 +64,11 @@ class AccountCard(CardWidget):
             )
         layout.addWidget(self._ip_combo)
 
-        self._proxy_input = LineEdit()
-        self._proxy_input.setPlaceholderText("Proxy (socks5://user:pass@host:port)")
-        self._proxy_input.setFixedWidth(300)
-        layout.addWidget(self._proxy_input)
+        self._proxy_combo = ComboBox()
+        self._proxy_combo.setFixedWidth(300)
+        self._refresh_proxy_combo()
+        self._proxy_combo.currentIndexChanged.connect(self._on_proxy_changed)
+        layout.addWidget(self._proxy_combo)
 
         self._test_proxy_btn = PushButton("Test")
         self._test_proxy_btn.setFixedWidth(50)
@@ -74,21 +80,54 @@ class AccountCard(CardWidget):
         self._launch_btn.clicked.connect(self._on_btn_clicked)
         layout.addWidget(self._launch_btn)
 
+    def _refresh_proxy_combo(self) -> None:
+        current_pid = self._proxy_combo.currentData()
+        self._proxy_combo.blockSignals(True)
+        self._proxy_combo.clear()
+        self._proxy_combo.addItem("No proxy", userData=None)
+
+        proxies = self._proxy_store.list_proxies()
+        for pid, entry in proxies.items():
+            label = entry.name
+            if entry.exit_ip:
+                label += f" ({entry.exit_ip})"
+            self._proxy_combo.addItem(label, userData=pid)
+
+        # Restore selection
+        assigned = self._proxy_store.get_assignment(self.login)
+        if assigned:
+            idx = self._proxy_combo.findData(assigned)
+            if idx >= 0:
+                self._proxy_combo.setCurrentIndex(idx)
+        elif current_pid:
+            idx = self._proxy_combo.findData(current_pid)
+            if idx >= 0:
+                self._proxy_combo.setCurrentIndex(idx)
+
+        self._proxy_combo.blockSignals(False)
+
+    def _on_proxy_changed(self) -> None:
+        proxy_id = self._proxy_combo.currentData()
+        self._proxy_store.assign_proxy(self.login, proxy_id)
+
     def _on_test_proxy(self) -> None:
-        proxy_url = self._proxy_input.text().strip() or None
-        if not proxy_url or not validation_proxy_url(proxy_url):
-            self.error_occurred.emit("Enter a valid socks5:// proxy URL first")
+        proxy_id = self._proxy_combo.currentData()
+        if not proxy_id:
+            self.error_occurred.emit("Select a proxy first")
             return
         self._test_proxy_btn.setDisabled(True)
         self._test_proxy_btn.setText("...")
 
-        def task(_on_progress: object) -> str:
-            return verify_proxy_ip(proxy_url)
+        def task(_on_progress: object) -> str | None:
+            return self._proxy_store.test_proxy(proxy_id)
 
         def on_success(ip: object) -> None:
             self._test_proxy_btn.setEnabled(True)
             self._test_proxy_btn.setText("Test")
-            self._proxy_input.setPlaceholderText(f"Exit IP: {ip}")
+            if ip:
+                self._refresh_proxy_combo()
+            else:
+                self.error_occurred.emit("Proxy test failed")
 
         def on_error(err: object) -> None:
             self._test_proxy_btn.setEnabled(True)
@@ -105,14 +144,10 @@ class AccountCard(CardWidget):
 
     def _on_launch_clicked(self) -> None:
         interface_ip = self._ip_combo.currentData() or None
-        proxy_url = self._proxy_input.text().strip() or None
-
-        if proxy_url and not validation_proxy_url(proxy_url):
-            self.error_occurred.emit("Invalid proxy url")
-            return
+        proxy_id = self._proxy_combo.currentData() or None
 
         self._launch_btn.setDisabled(True)
-        self.launch_requested.emit(interface_ip, proxy_url)
+        self.launch_requested.emit(interface_ip, proxy_id)
 
     def _stop_process(self) -> None:
         if self._current_pid is None:
@@ -161,8 +196,9 @@ class AccountCard(CardWidget):
     def is_running(self) -> bool:
         return self._current_pid is not None
 
-    def set_proxy(self, proxy_url: str) -> None:
-        self._proxy_input.setText(proxy_url)
+    def update_proxies(self) -> None:
+        """Refresh proxy combo when proxy list changes."""
+        self._refresh_proxy_combo()
 
     def update_interfaces(self, all_interface: dict[str, tuple[str, str]]) -> None:
         current_data = self._ip_combo.currentData()
