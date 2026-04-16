@@ -138,6 +138,16 @@ class AuthFlowTests(unittest.TestCase):
         self.assertIs(routed_launch, launch)
         self.assertEqual(card.login, "demo@example.com")
 
+    def test_shield_browser_dialog_shim_exports_embedded_dialog(self):
+        from ankama_launcher_emulator.gui.embedded_auth_browser_dialog import (
+            EmbeddedAuthBrowserDialog,
+        )
+        from ankama_launcher_emulator.gui.shield_browser_dialog import (
+            ShieldBrowserDialog,
+        )
+
+        self.assertIs(ShieldBrowserDialog, EmbeddedAuthBrowserDialog)
+
     def test_create_token_403_with_certificate_raises_shield_recovery_required(self):
         haapi = Haapi(
             "apikey",

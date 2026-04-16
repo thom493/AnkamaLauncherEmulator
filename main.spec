@@ -12,7 +12,10 @@ a = Analysis(
         ('resources/DofusRetro.png', 'resources'),
         ('resources/app.ico', 'resources'),
     ],
-    hiddenimports=[],
+    hiddenimports=[
+        'PyQt6.QtWebEngineCore',
+        'PyQt6.QtWebEngineWidgets',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
