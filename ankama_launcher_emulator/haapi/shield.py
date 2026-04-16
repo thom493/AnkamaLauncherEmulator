@@ -35,6 +35,14 @@ class ShieldRequired(Exception):
         super().__init__(f"Shield verification required for {login} from proxy")
 
 
+class ShieldRecoveryRequired(Exception):
+    """Raised when a certificate-backed createToken call needs recovery."""
+
+    def __init__(self, login: str):
+        self.login = login
+        super().__init__(f"Shield recovery required for {login}")
+
+
 def _make_session(proxy_url: str | None = None) -> requests.Session:
     session = requests.Session()
     if proxy_url:

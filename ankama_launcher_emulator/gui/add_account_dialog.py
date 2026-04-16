@@ -1,5 +1,6 @@
 """Add Account dialog — programmatic PKCE login with Shield support."""
 
+import importlib
 import logging
 import os
 import random
@@ -55,6 +56,13 @@ def _should_use_browser_login(err: object) -> bool:
         or "request blocked" in message
         or "cloudfront" in message
     )
+
+
+def _load_embedded_auth_dialog_class():
+    module = importlib.import_module(
+        "ankama_launcher_emulator.gui.shield_browser_dialog"
+    )
+    return module.ShieldBrowserDialog
 
 
 class AddAccountDialog(QDialog):
@@ -152,11 +160,15 @@ class AddAccountDialog(QDialog):
         alias: str | None,
         proxy_url: str | None,
     ) -> None:
-        from ankama_launcher_emulator.gui.shield_browser_dialog import (
-            ShieldBrowserDialog,
-        )
-
         self._status_label.setText("Headless login blocked, opening browser...")
+        try:
+            ShieldBrowserDialog = _load_embedded_auth_dialog_class()
+        except (ImportError, RuntimeError) as exc:
+            self._add_btn.setEnabled(True)
+            self._status_label.setText(
+                f"Embedded auth dialog unavailable: {exc}"
+            )
+            return
         session = ZaapPkceSession()
         dialog = ShieldBrowserDialog(session.auth_url, login, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:

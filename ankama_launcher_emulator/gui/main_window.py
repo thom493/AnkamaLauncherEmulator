@@ -54,6 +54,7 @@ from ankama_launcher_emulator.gui.utils import run_in_background
 from ankama_launcher_emulator.haapi.account_manager import remove_account
 from ankama_launcher_emulator.haapi.shield import (
     ShieldRequired,
+    ShieldRecoveryRequired,
     check_proxy_needs_shield,
     request_security_code,
     store_shield_certificate,
@@ -82,6 +83,9 @@ class MainWindow(QMainWindow):
         self._cards: list[AccountCard] = []
         self._current_game_is_dofus3: bool = DOFUS_INSTALLED or not RETRO_INSTALLED
         self._is_refreshing = False
+        server_handler = getattr(self._server, "handler", None)
+        if server_handler is not None:
+            server_handler.on_shield_recovery = self._on_server_shield_recovery
         self._setup_ui(accounts, all_interface)
         self._start_refresh_timer()
 
@@ -286,6 +290,12 @@ class MainWindow(QMainWindow):
     def _sync_empty_state(self) -> None:
         self._empty_state_card.setVisible(not self._cards)
 
+    def _find_card(self, login: str) -> AccountCard | None:
+        for card in self._cards:
+            if card.login == login:
+                return card
+        return None
+
     def _make_launch_handler(
         self,
         login: str,
@@ -301,6 +311,10 @@ class MainWindow(QMainWindow):
                 card.set_running(int(result))  # type: ignore[arg-type]
 
             def on_error(err: object) -> None:
+                if isinstance(err, ShieldRecoveryRequired):
+                    self._set_panel_status("")
+                    self._handle_shield_recovery(err, launch, card)
+                    return
                 if isinstance(err, ShieldRequired):
                     self._set_panel_status("")
                     self._handle_shield(err, launch, card)
@@ -362,6 +376,32 @@ class MainWindow(QMainWindow):
             on_progress=self._set_panel_status,
             parent=self,
         )
+
+    def _handle_shield_recovery(
+        self,
+        err: ShieldRecoveryRequired,
+        launch: Callable,
+        card: AccountCard,
+    ) -> None:
+        """Minimal recovery hook for certificate-backed Shield failures."""
+        del launch
+        self._show_error(f"Shield recovery required for {err.login}")
+        self._set_panel_status("")
+        card.set_launch_enabled(True)
+
+    def _on_server_shield_recovery(self, login: str) -> None:
+        def route_recovery() -> None:
+            card = self._find_card(login)
+            if card is None:
+                self._show_error(f"Shield recovery required for {login}")
+                return
+            self._handle_shield_recovery(
+                ShieldRecoveryRequired(login),
+                self._current_launch_fn(),
+                card,
+            )
+
+        QTimer.singleShot(0, route_recovery)
 
     def _show_shield_code_dialog(
         self,
