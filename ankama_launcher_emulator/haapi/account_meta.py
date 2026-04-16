@@ -74,6 +74,15 @@ class AccountMeta:
         self._data[login] = entry
         self._save()
 
+    def set_hm1(self, login: str, hm1: str | None) -> None:
+        entry = self._data.get(login, {})
+        if hm1 is None:
+            entry.pop("hm1", None)
+        else:
+            entry["hm1"] = hm1
+        self._data[login] = entry
+        self._save()
+
     def remove(self, login: str) -> None:
         if login in self._data:
             del self._data[login]

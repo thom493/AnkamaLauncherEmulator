@@ -148,6 +148,73 @@ class AuthFlowTests(unittest.TestCase):
 
         self.assertIs(ShieldBrowserDialog, EmbeddedAuthBrowserDialog)
 
+    @patch("ankama_launcher_emulator.gui.add_account_dialog.run_in_background")
+    @patch("ankama_launcher_emulator.gui.add_account_dialog.persist_managed_account")
+    @patch("ankama_launcher_emulator.gui.add_account_dialog.store_shield_certificate")
+    @patch("ankama_launcher_emulator.gui.add_account_dialog.validate_security_code")
+    @patch("ankama_launcher_emulator.gui.add_account_dialog.ShieldCodeDialog")
+    def test_add_account_shield_validation_persists_without_random_hm1(
+        self,
+        shield_dialog_cls,
+        validate_security_code,
+        store_shield_certificate,
+        persist_managed_account,
+        run_in_background,
+    ):
+        dialog = AddAccountDialog(_ProxyStore())
+        shield_dialog = MagicMock()
+        shield_dialog.exec.return_value = dialog.DialogCode.Accepted
+        shield_dialog.get_code.return_value = "123456"
+        shield_dialog_cls.return_value = shield_dialog
+        validate_security_code.return_value = {"id": 42, "encodedCertificate": "abc"}
+
+        def run_task(task, on_success=None, on_error=None, parent=None):
+            del on_error, parent
+            result = task(None)
+            if on_success is not None:
+                on_success(result)
+
+        run_in_background.side_effect = run_task
+
+        dialog._show_shield_dialog(
+            {
+                "access_token": "access-token",
+                "refresh_token": "refresh-token",
+                "account_id": 7,
+            },
+            "demo@example.com",
+            "Demo",
+        )
+
+        validate_security_code.assert_called_once_with("access-token", "123456")
+        store_shield_certificate.assert_called_once_with(
+            "demo@example.com",
+            {"id": 42, "encodedCertificate": "abc"},
+        )
+        persist_managed_account.assert_called_once_with(
+            "demo@example.com",
+            7,
+            "access-token",
+            "refresh-token",
+            alias="Demo",
+            hm1=None,
+        )
+
+    def test_account_meta_set_hm1_clears_stale_values(self):
+        from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+        meta = AccountMeta()
+        meta._data = {"demo@example.com": {"hm1": "deadbeef", "source": "managed"}}
+
+        with patch.object(meta, "_save") as save:
+            meta.set_hm1("demo@example.com", None)
+
+        self.assertEqual(
+            meta._data["demo@example.com"],
+            {"source": "managed"},
+        )
+        save.assert_called_once()
+
     def test_create_token_403_with_certificate_raises_shield_recovery_required(self):
         haapi = Haapi(
             "apikey",

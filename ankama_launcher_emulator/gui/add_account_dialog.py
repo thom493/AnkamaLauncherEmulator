@@ -2,11 +2,7 @@
 
 import importlib
 import logging
-import os
-import random
-import time
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -22,12 +18,11 @@ from qfluentwidgets import (
     PushButton,
 )
 
-from ankama_launcher_emulator.consts import API_KEY_FOLDER_PATH
-from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
-from ankama_launcher_emulator.decrypter.device import Device
 from ankama_launcher_emulator.gui.shield_dialog import ShieldCodeDialog
 from ankama_launcher_emulator.gui.utils import run_in_background
-from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+from ankama_launcher_emulator.haapi.account_persistence import (
+    persist_managed_account,
+)
 from ankama_launcher_emulator.haapi.pkce_auth import (
     ZaapPkceSession,
     fetch_account_profile,
@@ -41,12 +36,6 @@ from ankama_launcher_emulator.haapi.shield import (
 from ankama_launcher_emulator.utils.proxy_store import ProxyStore
 
 logger = logging.getLogger()
-
-
-def _make_random_hm(length: int = 32) -> str:
-    """Generate random hex string (matching dofus-multi makeid)."""
-    chars = "abcdef0123456789"
-    return "".join(chars[int(random.random() * len(chars))] for _ in range(length))
 
 
 def _should_use_browser_login(err: object) -> bool:
@@ -71,7 +60,6 @@ class AddAccountDialog(QDialog):
     def __init__(self, proxy_store: ProxyStore, parent=None):
         super().__init__(parent)
         self._proxy_store = proxy_store
-        self._meta = AccountMeta()
         self.setWindowTitle("Add Account")
         self.setMinimumWidth(450)
         self._setup_ui()
@@ -225,7 +213,7 @@ class AddAccountDialog(QDialog):
         if needs_shield:
             self._handle_shield(data, login, alias)
         else:
-            self._store_account(data, login, alias)
+            self._persist_account(data, login, alias)
             self._status_label.setText("Account added!")
             self.accept()
 
@@ -266,19 +254,15 @@ class AddAccountDialog(QDialog):
             self._add_btn.setEnabled(True)
             return
 
-        # Validate code with random hm1/hm2 (matching dofus-multi)
-        hm1 = _make_random_hm(32)
-        hm2 = hm1[::-1]
-
         self._status_label.setText("Validating Shield code...")
 
         def validate(_on_progress: object) -> dict:
-            return validate_security_code(data["access_token"], code, hm1=hm1, hm2=hm2)
+            return validate_security_code(data["access_token"], code)
 
         def on_validated(cert_data: object) -> None:
             cert = dict(cert_data)  # type: ignore[arg-type]
             store_shield_certificate(login, cert)
-            self._store_account(data, login, alias, hm1=hm1)
+            self._persist_account(data, login, alias)
             self._status_label.setText("Account added with Shield!")
             self.accept()
 
@@ -290,32 +274,18 @@ class AddAccountDialog(QDialog):
             validate, on_success=on_validated, on_error=on_error, parent=self
         )
 
-    def _store_account(
+    def _persist_account(
         self,
         data: dict,
         login: str,
         alias: str | None,
-        hm1: str | None = None,
     ) -> None:
-        """Store account in Zaap keydata format + metadata."""
-        # Build keydata JSON matching DecipheredApiKeyDatas
-        keydata = {
-            "key": data["access_token"],
-            "provider": "ankama",
-            "refreshToken": data.get("refresh_token", ""),
-            "isStayLoggedIn": True,
-            "accountId": data["account_id"],
-            "login": login,
-            "refreshDate": int(time.time() * 1000),
-        }
-
-        # Write encrypted keydata file
-        file_name = ".key" + CryptoHelper.createHashFromStringSha(login)
-        file_path = os.path.join(API_KEY_FOLDER_PATH, file_name)
-        uuid = Device.getUUID()
-        CryptoHelper.encryptToFile(file_path, keydata, uuid)
-        logger.info(f"[ADD_ACCOUNT] Stored keydata for {login}")
-
-        # Store metadata
-        self._meta.set_meta(login, source="managed", alias=alias, hm1=hm1)
-        logger.info(f"[ADD_ACCOUNT] Stored metadata for {login}")
+        persist_managed_account(
+            login,
+            data["account_id"],
+            data["access_token"],
+            data.get("refresh_token"),
+            alias=alias,
+            hm1=None,
+        )
+        logger.info(f"[ADD_ACCOUNT] Stored managed account for {login}")
