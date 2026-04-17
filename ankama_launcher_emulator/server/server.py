@@ -87,8 +87,18 @@ class AnkamaLauncherServer:
         random_hash = str(uuid.uuid4())
         self.instance_id += 1
 
-        apikey_data = CryptoHelper.getStoredApiKey(login)["apikey"]
+        uuid_active, _, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+        try:
+            apikey_data = CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)["apikey"]
+        except StopIteration:
+            raise ValueError("No API key found in active database!")
         api_key = apikey_data["key"]
+
+        from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+        meta = AccountMeta()
+        entry = meta.get(login) or {}
+        portable_mode = entry.get("portable_mode", False)
+        fake_uuid = entry.get("fake_uuid", "")
 
         self.handler.infos_by_hash[random_hash] = AccountGameInfo(
             login=login,
@@ -100,6 +110,7 @@ class AnkamaLauncherServer:
                 login=login,
                 proxy_url=proxy_url,
                 refresh_token=apikey_data.get("refreshToken"),
+                refresh_date=apikey_data.get("refreshDate"),
             ),
         )
 
@@ -110,6 +121,9 @@ class AnkamaLauncherServer:
             random_hash,
             connection_port=connection_port,
             interface_ip=interface_ip,
+            proxy_url=proxy_url,
+            portable_mode=portable_mode,
+            fake_uuid=fake_uuid,
         )
 
     def launch_retro(
@@ -146,8 +160,19 @@ class AnkamaLauncherServer:
         random_hash = str(uuid.uuid4())
         self.instance_id += 1
 
-        apikey_data = CryptoHelper.getStoredApiKey(login)["apikey"]
+        uuid_active, _, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+        try:
+            apikey_data = CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)["apikey"]
+        except StopIteration:
+            raise ValueError("No API key found in active database!")
         api_key = apikey_data["key"]
+        
+        from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+        meta = AccountMeta()
+        entry = meta.get(login) or {}
+        portable_mode = entry.get("portable_mode", False)
+        fake_uuid = entry.get("fake_uuid", "")
+        fake_hostname = entry.get("fake_hostname", "")
 
         self.handler.infos_by_hash[random_hash] = AccountGameInfo(
             login=login,
@@ -159,9 +184,12 @@ class AnkamaLauncherServer:
                 login=login,
                 proxy_url=proxy_url,
                 refresh_token=apikey_data.get("refreshToken"),
+                refresh_date=apikey_data.get("refreshDate"),
             ),
         )
 
         return launch_retro_exe(
-            self.instance_id, random_hash, port, interface_ip=interface_ip
+            self.instance_id, random_hash, port, interface_ip=interface_ip,
+            proxy_url=proxy_url, portable_mode=portable_mode, 
+            fake_uuid=fake_uuid, fake_hostname=fake_hostname
         )

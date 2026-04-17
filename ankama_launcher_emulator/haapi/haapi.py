@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +10,9 @@ import urllib3
 from ankama_launcher_emulator.utils.debug_logger import hook_session
 from ankama_launcher_emulator.utils.internet import InterfaceAdapter
 from ankama_launcher_emulator.utils.proxy import to_socks5h
+
+# Match bot's 2-day lazy refresh window (Bubble.D3.Bot AnkamaService.cs:54).
+REFRESH_WINDOW_MS = 172_800_000
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -52,6 +56,7 @@ class Haapi:
     interface_ip: str | None
     proxy_url: str | None
     refresh_token: str | None = None
+    refresh_date: int | None = None
 
     def __post_init__(self):
         self.zaap_session = requests.Session()
@@ -91,6 +96,15 @@ class Haapi:
     def refreshApiKey(self) -> None:
         if not self.refresh_token:
             return
+
+        now_ms = int(time.time() * 1000)
+        if self.refresh_date and now_ms - self.refresh_date < REFRESH_WINDOW_MS:
+            return
+
+        from ankama_launcher_emulator.haapi.account_persistence import (
+            persist_token_refresh,
+        )
+
         url = ANKAMA_API_REFRESH_API_KEY
         try:
             response = self.zaap_session.post(
@@ -102,6 +116,22 @@ class Haapi:
             response.raise_for_status()
         except requests.exceptions.HTTPError as err:
             logger.warning(f"[HAAPI] RefreshApiKey failed ({err}), continuing anyway")
+            return
+
+        body = response.json()
+        new_access = body.get("key") or body.get("access_token")
+        new_refresh = body.get("refreshToken") or body.get("refresh_token")
+        if not new_access:
+            logger.warning("[HAAPI] RefreshApiKey response missing access token")
+            return
+
+        self.api_key = new_access
+        self.zaap_session.headers["apikey"] = new_access
+        if new_refresh:
+            self.refresh_token = new_refresh
+        self.refresh_date = now_ms
+
+        persist_token_refresh(self.login, new_access, new_refresh)
 
     @retry_internet
     def createToken(

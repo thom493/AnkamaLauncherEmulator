@@ -18,11 +18,15 @@ recv(function (config) {
     if (Array.isArray(config.proxyIp) && config.proxyIp.length === 4) {
         proxyIp = config.proxyIp;
     }
-    if (typeof config.fakeHostname === 'string') {
+    if (typeof config.fakeHostname === 'string' && config.portableMode) {
         fakeHostname = config.fakeHostname;
     }
-    hookConnect();
-    if (fakeHostname) {
+    
+    if (config.proxyUrl) {
+        hookConnect();
+    }
+    
+    if (config.portableMode) {
         hookHostname();
     }
     send('hooks_ready');

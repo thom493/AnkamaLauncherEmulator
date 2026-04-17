@@ -22,6 +22,7 @@ ankama_launcher_emulator/.DS_Store
 
 # Added by code-review-graph
 .code-review-graph/
+graphify-out/
 
 resources/Retro/
 resources/dofus-multi-master/
@@ -36,7 +37,7 @@ resources/Ankama Launcher/
 resources/AnkamaLauncher_Beta/
 resources/zaap-source/
 resources/ankama_shield_newIP_ankamalauncher.pcapng
-resources/Bubble.D3.Bot/
+resources/Bubble.D3/
 resources/dofus-multi/
 resources/DivaZaap/
 resources/CertificateService.cs

@@ -222,7 +222,7 @@ class AddAccountDialog(QDialog):
         self._status_label.setText("Requesting Shield code via email...")
 
         def request_code(_on_progress: object) -> None:
-            request_security_code(data["access_token"])
+            request_security_code(data["access_token"], proxy_url=data.get("proxy_url"))
 
         def on_code_requested(_result: object) -> None:
             self._show_shield_dialog(data, login, alias)
@@ -257,11 +257,15 @@ class AddAccountDialog(QDialog):
         self._status_label.setText("Validating Shield code...")
 
         def validate(_on_progress: object) -> dict:
-            return validate_security_code(data["access_token"], code)
+            from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
+            _, _, _, hm1, hm2 = CryptoHelper.get_crypto_context(login)
+            return validate_security_code(data["access_token"], code, hm1=hm1, hm2=hm2, proxy_url=data.get("proxy_url"))
 
         def on_validated(cert_data: object) -> None:
+            from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
+            uuid_active, cert_folder, _, _, _ = CryptoHelper.get_crypto_context(login)
             cert = dict(cert_data)  # type: ignore[arg-type]
-            store_shield_certificate(login, cert)
+            store_shield_certificate(login, cert, cert_folder, uuid_active)
             self._persist_account(data, login, alias)
             self._status_label.setText("Account added with Shield!")
             self.accept()
@@ -286,6 +290,5 @@ class AddAccountDialog(QDialog):
             data["access_token"],
             data.get("refresh_token"),
             alias=alias,
-            hm1=None,
         )
         logger.info(f"[ADD_ACCOUNT] Stored managed account for {login}")

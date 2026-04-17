@@ -377,9 +377,10 @@ class MainWindow(QMainWindow):
         self._set_panel_status("Requesting Shield code via email...")
 
         def request_code(on_progress: Callable) -> str:
-            api_key = CryptoHelper.getStoredApiKey(err.login)["apikey"]["key"]
+            uuid_active, _, key_folder, _, _ = CryptoHelper.get_crypto_context(err.login)
+            api_key = CryptoHelper.getStoredApiKey(err.login, key_folder, uuid_active)["apikey"]["key"]
             on_progress("Requesting security code via email...")
-            request_security_code(api_key)
+            request_security_code(api_key, proxy_url=err.proxy_url)
             logger.info("[SHIELD] Security code requested via email")
             return api_key
 
@@ -433,7 +434,12 @@ class MainWindow(QMainWindow):
             on_progress("Signing in again...")
             data = complete_embedded_login(auth_code, session, err.login)
             on_progress("Requesting security code via email...")
-            request_security_code(data["access_token"])
+            # We don't have proxy context easily accessible here unless we query `AccountMeta`
+            # But portable proxy uses err.proxy_url passed around? Actually err doesn't have proxy_url for ShieldRecoveryRequired
+            # So we query AccountMeta
+            meta = AccountMeta().get(err.login) or {}
+            proxy_url = meta.get("proxy_url")
+            request_security_code(data["access_token"], proxy_url=proxy_url)
             return data
 
         def on_reauthenticated(result: object) -> None:
@@ -503,9 +509,12 @@ class MainWindow(QMainWindow):
             interface_ip = cast(str | None, context.get("interface_ip"))
             proxy_url = cast(str | None, context.get("proxy_url"))
             on_progress("Validating security code...")
-            cert_data = validate_security_code(data["access_token"], code)
+            
+            uuid_active, cert_folder, _, hm1, hm2 = CryptoHelper.get_crypto_context(login)
+            cert_data = validate_security_code(data["access_token"], code, hm1=hm1, hm2=hm2, proxy_url=proxy_url)
+            
             on_progress("Storing refreshed certificate...")
-            store_shield_certificate(login, cert_data)
+            store_shield_certificate(login, cert_data, cert_folder, uuid_active)
             alias = cast(str | None, (AccountMeta().get(login) or {}).get("alias"))
             if alias is None:
                 alias = cast(str | None, data.get("nickname")) or None
@@ -571,10 +580,11 @@ class MainWindow(QMainWindow):
 
         def validate_and_launch(on_progress: Callable) -> int:
             on_progress("Validating security code...")
-            cert_data = validate_security_code(api_key, code)
+            uuid_active, cert_folder, _, hm1, hm2 = CryptoHelper.get_crypto_context(err.login)
+            cert_data = validate_security_code(api_key, code, hm1=hm1, hm2=hm2, proxy_url=err.proxy_url)
             logger.info("[SHIELD] ValidateCode success")
             on_progress("Storing certificate...")
-            store_shield_certificate(err.login, cert_data)
+            store_shield_certificate(err.login, cert_data, cert_folder, uuid_active)
             on_progress("Shield validated, launching...")
             self._proxy_store.save_validated(err.login, err.proxy_url)
             return launch(
@@ -618,7 +628,8 @@ class MainWindow(QMainWindow):
         security requires it.
         """
         try:
-            CryptoHelper.getStoredCertificate(login)
+            uuid_active, cert_folder, _, _, _ = CryptoHelper.get_crypto_context(login)
+            CryptoHelper.getStoredCertificate(login, cert_folder, uuid_active)
             logger.info(
                 f"[SHIELD] Certificate exists for {login}, skipping Shield check"
             )
@@ -628,7 +639,8 @@ class MainWindow(QMainWindow):
 
         if on_progress:
             on_progress("Checking proxy authorization...")
-        api_key = CryptoHelper.getStoredApiKey(login)["apikey"]["key"]
+        uuid_active, _, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+        api_key = CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)["apikey"]["key"]
         if check_proxy_needs_shield(api_key, proxy_url):
             raise ShieldRequired(login, proxy_url)
 
@@ -692,7 +704,8 @@ class MainWindow(QMainWindow):
 
         def task(_on_progress: object) -> None:
             try:
-                stored = CryptoHelper.getStoredApiKey(login)
+                uuid_active, _, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+                stored = CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)
                 api_key = stored["apikey"]["key"]
             except StopIteration:
                 api_key = None
@@ -756,7 +769,9 @@ class MainWindow(QMainWindow):
         self._is_refreshing = True
 
         def fetch(_on_progress: Callable) -> tuple:
-            return CryptoHelper.getStoredApiKeys(), get_available_network_interfaces()
+            from ankama_launcher_emulator.consts import API_KEY_FOLDER_PATH
+            from ankama_launcher_emulator.decrypter.device import Device
+            return CryptoHelper.getStoredApiKeys(API_KEY_FOLDER_PATH, Device.getUUID()), get_available_network_interfaces()
 
         def on_success(result: object) -> None:
             accounts, interfaces = cast(tuple, result)

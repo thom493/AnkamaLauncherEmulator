@@ -84,12 +84,12 @@ def check_proxy_needs_shield(api_key: str, proxy_url: str) -> bool:
         return True
 
 
-def get_account(api_key: str) -> dict:
+def get_account(api_key: str, proxy_url: str | None = None) -> dict:
     """GET /Account/Account with the given API key.
 
     Returns account info including 'security' field.
     """
-    session = _make_session()
+    session = _make_session(proxy_url)
     response = session.get(
         "https://haapi.ankama.com/json/Ankama/v5/Account/Account",
         headers=_zaap_headers(api_key),
@@ -99,10 +99,10 @@ def get_account(api_key: str) -> dict:
     return response.json()
 
 
-def account_needs_shield(api_key: str) -> bool:
+def account_needs_shield(api_key: str, proxy_url: str | None = None) -> bool:
     """Check if account's security field includes SHIELD."""
     try:
-        account = get_account(api_key)
+        account = get_account(api_key, proxy_url)
         security = account.get("security", [])
         needs = "SHIELD" in security or "UNSECURED" in security
         logger.info(f"[SHIELD] Account security={security}, needs_shield={needs}")
@@ -115,13 +115,14 @@ def account_needs_shield(api_key: str) -> bool:
 def request_security_code(
     api_key: str,
     transport_type: str = "EMAIL",
+    proxy_url: str | None = None,
 ) -> dict:
     """Request Ankama to send a security code via email.
 
     GET /Shield/SecurityCode?transportType=EMAIL
     Returns the response body dict on success.
     """
-    session = _make_session()
+    session = _make_session(proxy_url)
     headers = _zaap_headers(api_key)
 
     response = session.get(
@@ -143,6 +144,7 @@ def validate_security_code(
     code: str,
     hm1: str | None = None,
     hm2: str | None = None,
+    proxy_url: str | None = None,
 ) -> dict:
     """Validate the security code with full params matching official launcher.
 
@@ -151,7 +153,7 @@ def validate_security_code(
 
     If hm1/hm2 not provided, uses machine-derived values.
     """
-    session = _make_session()
+    session = _make_session(proxy_url)
     headers = _zaap_headers(api_key)
     if not hm1 or not hm2:
         hm1, hm2 = CryptoHelper.createHmEncoders()
@@ -179,18 +181,14 @@ def validate_security_code(
     return response.json()
 
 
-def store_shield_certificate(login: str, cert_data: dict) -> None:
+def store_shield_certificate(login: str, cert_data: dict, cert_folder_path: str, uuid_to_use: str) -> None:
     """Store the certificate returned by ValidateCode."""
     import os
 
-    from ankama_launcher_emulator.consts import CERTIFICATE_FOLDER_PATH
-    from ankama_launcher_emulator.decrypter.device import Device
-
     cert_data["login"] = login
     file_path = os.path.join(
-        CERTIFICATE_FOLDER_PATH,
+        cert_folder_path,
         ".certif" + CryptoHelper.createHashFromStringSha(login),
     )
-    uuid = Device.getUUID()
-    CryptoHelper.encryptToFile(file_path, cert_data, uuid)
+    CryptoHelper.encryptToFile(file_path, cert_data, uuid_to_use)
     logger.info(f"[SHIELD] Certificate stored for {login}")

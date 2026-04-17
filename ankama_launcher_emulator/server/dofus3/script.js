@@ -1,11 +1,23 @@
 const TARGET_PORTS = new Set([5555]);
 
+let proxyIp = [127, 0, 0, 1];
+let fakeUuid = '';
+
 recv(function (message) {
     const proxyPort = message.port;
-    const proxyIp = Array.isArray(message.proxyIp) && message.proxyIp.length === 4
-        ? message.proxyIp
-        : [127, 0, 0, 1];
-    hookConnect(proxyPort, proxyIp);
+    if (message.proxyUrl) {
+        proxyIp = Array.isArray(message.proxyIp) && message.proxyIp.length === 4
+            ? message.proxyIp : [127, 0, 0, 1];
+        hookConnect(proxyPort, proxyIp);
+    }
+    
+    if (message.portableMode && message.fakeUuid) {
+        fakeUuid = message.fakeUuid;
+        hookHostname(); // Usually windows networking checks
+        hookSystemInfo();
+    }
+    
+    send('hooks_ready');
 });
 
 
@@ -49,8 +61,50 @@ function hookConnect(proxyPort, proxyIp) {
                 }
             }
             catch (err) {
-                console.info(err.message)
+                console.info(err.message);
             }
         }
     });
+}
+
+function hookHostname() {
+    try {
+        const hostnameBuffers = {};
+        const fakeHostname = "DESKTOP-" + fakeUuid.substring(0, 7).toUpperCase();
+
+        const gethostnamePtr = Module.getExportByName("ws2_32.dll", "gethostname");
+        if (gethostnamePtr) {
+            Interceptor.attach(gethostnamePtr, {
+                onEnter(args) { hostnameBuffers[args[0].toString()] = ptr(args[0]); },
+                onLeave() {
+                    for (const key in hostnameBuffers) {
+                        try {
+                            hostnameBuffers[key].writeAnsiString(fakeHostname + String.fromCharCode(0));
+                        } catch (e) {}
+                        delete hostnameBuffers[key];
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        console.log(`ERREUR hookHostname: ${err.message}`);
+    }
+}
+
+function hookSystemInfo() {
+    try {
+        if (typeof Il2Cpp !== 'undefined') {
+            Il2Cpp.perform(function() {
+                const SystemInfo = Il2Cpp.domain.assembly("UnityEngine.CoreModule").image.class("UnityEngine.SystemInfo");
+                const get_deviceUniqueIdentifier = SystemInfo.method("get_deviceUniqueIdentifier");
+                get_deviceUniqueIdentifier.implementation = function() {
+                    return Il2Cpp.string(fakeUuid);
+                };
+            });
+        } else {
+            console.log("frida-il2cpp-bridge not loaded, skipping UnityEngine.SystemInfo intercept");
+        }
+    } catch (e) {
+        console.log(`ERREUR hookSystemInfo: ${e.message}`);
+    }
 }

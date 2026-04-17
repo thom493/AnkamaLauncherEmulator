@@ -63,13 +63,49 @@ class AnkamaLauncherHandler:
     def auth_getGameToken(self, hash: str, gameId: int) -> str:
         logger.info(f"auth_getGameToken {hash}")
         login = self.infos_by_hash[hash].login
-        try:
-            certificate_datas = CryptoHelper.getStoredCertificate(login)["certificate"]
-        except FileNotFoundError:
-            certificate_datas = None
+        
         meta = AccountMeta()
-        hm1 = meta.get_hm1(login)
-        hm2 = meta.get_hm2(login)
+        entry = meta.get(login) or {}
+        portable = entry.get("portable_mode", False)
+        
+        from ankama_launcher_emulator.consts import (
+            CERTIFICATE_FOLDER_PATH, ALT_CERTIFICATE_FOLDER_PATH,
+            API_KEY_FOLDER_PATH, ALT_API_KEY_FOLDER_PATH
+        )
+        from ankama_launcher_emulator.decrypter.device import Device
+        import os
+        
+        real_uuid = Device.getUUID()
+        fake_uuid = entry.get("fake_uuid")
+        
+        if portable and fake_uuid:
+            uuid_to_use = fake_uuid
+            cert_folder = ALT_CERTIFICATE_FOLDER_PATH
+            key_folder = ALT_API_KEY_FOLDER_PATH
+            hm1 = entry.get("fake_hm1")
+            hm2 = entry.get("fake_hm2")
+            
+            try:
+                CryptoHelper.getStoredApiKey(login, key_folder, uuid_to_use)
+            except StopIteration:
+                try:
+                    official_key = CryptoHelper.getStoredApiKey(login, API_KEY_FOLDER_PATH, real_uuid)
+                    file_path = os.path.join(key_folder, official_key["apikeyFile"])
+                    CryptoHelper.encryptToFile(file_path, official_key["apikey"], uuid_to_use)
+                    logger.info(f"[MIGRATION] Keydata sandboxed for {login}")
+                except StopIteration:
+                    pass
+        else:
+            uuid_to_use = real_uuid
+            cert_folder = CERTIFICATE_FOLDER_PATH
+            key_folder = API_KEY_FOLDER_PATH
+            hm1, hm2 = CryptoHelper.createHmEncoders()
+            
+        try:
+            certificate_datas = CryptoHelper.getStoredCertificate(login, cert_folder, uuid_to_use)["certificate"]
+        except (FileNotFoundError, IOError):
+            certificate_datas = None
+            
         try:
             return self.infos_by_hash[hash].haapi.createToken(
                 gameId, certificate_datas, hm1=hm1, hm2=hm2

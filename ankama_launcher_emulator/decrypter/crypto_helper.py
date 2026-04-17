@@ -25,24 +25,44 @@ from ankama_launcher_emulator.interfaces.deciphered_cert import (
 
 class CryptoHelper:
     @staticmethod
-    def getStoredCertificate(login: str) -> StoredCertificate:
+    def get_crypto_context(login: str) -> tuple[str, str, str, str, str]:
+        """Returns (uuid_to_use, cert_folder, key_folder, hm1, hm2) depending on portable mode."""
+        from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+        from ankama_launcher_emulator.decrypter.device import Device
+        from ankama_launcher_emulator.consts import (
+            CERTIFICATE_FOLDER_PATH, ALT_CERTIFICATE_FOLDER_PATH,
+            API_KEY_FOLDER_PATH, ALT_API_KEY_FOLDER_PATH
+        )
+        meta = AccountMeta()
+        entry = meta.get(login) or {}
+        portable = entry.get("portable_mode", False)
+        fake_uuid = entry.get("fake_uuid")
+        
+        if portable and fake_uuid:
+            return (fake_uuid, ALT_CERTIFICATE_FOLDER_PATH, ALT_API_KEY_FOLDER_PATH, 
+                    str(entry.get("fake_hm1") or ""), str(entry.get("fake_hm2") or ""))
+            
+        hm1, hm2 = CryptoHelper.createHmEncoders()
+        return Device.getUUID(), CERTIFICATE_FOLDER_PATH, API_KEY_FOLDER_PATH, hm1, hm2
+    @staticmethod
+    def getStoredCertificate(login: str, cert_folder_path: str, uuid_auth: str) -> StoredCertificate:
         file_path = os.path.join(
-            CERTIFICATE_FOLDER_PATH,
+            cert_folder_path,
             ".certif" + CryptoHelper.createHashFromStringSha(login),
         )
         return {
-            "certificate": CryptoHelper.decryptFromFileWithUUID(file_path),
+            "certificate": CryptoHelper.decryptFromFile(file_path, uuid_auth),
             "filepath": file_path,
         }
 
     @staticmethod
-    def getStoredApiKeys() -> list[DecipheredApiKey]:
+    def getStoredApiKeys(api_key_folder_path: str, uuid_auth: str) -> list[DecipheredApiKey]:
         deciphered_apikeys: list[DecipheredApiKey] = []
-        for apikey_file in os.listdir(API_KEY_FOLDER_PATH):
+        for apikey_file in os.listdir(api_key_folder_path):
             if not apikey_file.startswith(".key"):
                 continue
-            apikey_data: DecipheredApiKeyDatas = CryptoHelper.decryptFromFileWithUUID(
-                os.path.join(API_KEY_FOLDER_PATH, apikey_file)
+            apikey_data: DecipheredApiKeyDatas = CryptoHelper.decryptFromFile(
+                os.path.join(api_key_folder_path, apikey_file), uuid_auth
             )
             deciphered_apikeys.append(
                 {"apikeyFile": apikey_file, "apikey": apikey_data}
@@ -50,17 +70,14 @@ class CryptoHelper:
         return deciphered_apikeys
 
     @staticmethod
-    def getStoredApiKey(login: str) -> DecipheredApiKey:
+    def getStoredApiKey(login: str, api_key_folder_path: str, uuid_auth: str) -> DecipheredApiKey:
         return next(
             deciphered_api_key
-            for deciphered_api_key in CryptoHelper.getStoredApiKeys()
+            for deciphered_api_key in CryptoHelper.getStoredApiKeys(api_key_folder_path, uuid_auth)
             if deciphered_api_key["apikey"]["login"] == login
         )
 
-    @staticmethod
-    def decryptFromFileWithUUID(file_path: str):
-        uuid = Device.getUUID()
-        return CryptoHelper.decryptFromFile(file_path, uuid)
+
 
     @staticmethod
     def decryptFromFile(file_path: str, uuid: str):
@@ -111,12 +128,16 @@ class CryptoHelper:
         username = getpass.getuser()
         os_version = Device.getOsVersion()
         ram = Device.getComputerRam()
+        
+        # Parity with C# float.ToString(CultureInfo.InvariantCulture) mapping
+        os_version_str = str(int(os_version)) if float(os_version).is_integer() else str(os_version)
+
         machine_infos = [
             arch,
             plt,
             machine_id,
             username,
-            str(int(os_version)),
+            os_version_str,
             str(ram),
         ]
         hm1 = CryptoHelper.createHashFromStringSha("".join(machine_infos))

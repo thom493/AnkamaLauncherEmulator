@@ -61,27 +61,68 @@ class AccountMeta:
         login: str,
         source: str = "managed",
         alias: str | None = None,
-        hm1: str | None = None,
     ) -> None:
         entry = self._data.get(login, {})
         entry["source"] = source
         if alias is not None:
             entry["alias"] = alias
-        if hm1 is not None:
-            entry["hm1"] = hm1
         if "added_at" not in entry:
             entry["added_at"] = datetime.now().isoformat()
+        
+        self._data[login] = entry
+        self.generate_fake_profile(login)  # Ensure fake profile exists
+        self._save()
+
+    def generate_fake_profile(self, login: str) -> None:
+        entry = self._data.get(login, {})
+        if "fake_uuid" not in entry:
+            import uuid, hashlib, random, string
+            fake_uuid = str(uuid.uuid4())
+            fake_machine_id = hashlib.sha256(fake_uuid.encode('utf-8')).hexdigest()
+            # Simulate Windows 10, 16gb Machine
+            machine_infos = [
+                "x64",
+                "win32",
+                fake_machine_id,
+                "user",
+                "10",
+                "16384"
+            ]
+            fake_hm1 = hashlib.sha256("".join(machine_infos).encode("utf-8")).hexdigest()[:32]
+            
+            entry["fake_uuid"] = fake_uuid
+            entry["fake_hm1"] = fake_hm1
+            entry["fake_hm2"] = fake_hm1[::-1]
+            entry["fake_hostname"] = "DESKTOP-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=7))
+            entry["portable_mode"] = False
+            entry["proxy_url"] = None
+            
+            self._data[login] = entry
+            self._save()
+
+    def set_portable_mode(self, login: str, portable: bool) -> None:
+        entry = self._data.get(login, {})
+        entry["portable_mode"] = portable
         self._data[login] = entry
         self._save()
 
-    def set_hm1(self, login: str, hm1: str | None) -> None:
+    def set_proxy(self, login: str, proxy_url: str | None) -> None:
         entry = self._data.get(login, {})
-        if hm1 is None:
-            entry.pop("hm1", None)
-        else:
-            entry["hm1"] = hm1
+        entry["proxy_url"] = proxy_url
         self._data[login] = entry
-        self._save()
+        self._save()    
+
+    def is_proxy_used(self, proxy_url: str, exclude_login: str | None = None) -> bool:
+        for _login, entry in self._data.items():
+            if exclude_login and _login == exclude_login:
+                continue
+            if entry.get("proxy_url") == proxy_url:
+                return True
+        return False
+
+
+    def set_hm1(self, login: str, hm1: str | None) -> None:
+        pass # Obsolete: Handled by generate_fake_profile
 
     def remove(self, login: str) -> None:
         if login in self._data:

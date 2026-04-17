@@ -68,6 +68,13 @@ else:
     )
 os.makedirs(app_config_dir, exist_ok=True)
 
+ALT_LAUNCHER_DATA_PATH = os.path.join(app_config_dir, "portable_data")
+ALT_CERTIFICATE_FOLDER_PATH = os.path.join(ALT_LAUNCHER_DATA_PATH, "certificate")
+ALT_API_KEY_FOLDER_PATH = os.path.join(ALT_LAUNCHER_DATA_PATH, "keydata")
+
+os.makedirs(ALT_CERTIFICATE_FOLDER_PATH, exist_ok=True)
+os.makedirs(ALT_API_KEY_FOLDER_PATH, exist_ok=True)
+
 APP_CONFIG_PATH = os.path.join(app_config_dir, "config.json")
 
 _BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent))

@@ -24,7 +24,14 @@ def generate_fake_hostname() -> str:
 
 
 def launch_retro_exe(
-    instance_id: int, random_hash: str, port: int, interface_ip: str | None = None
+    instance_id: int, 
+    random_hash: str, 
+    port: int, 
+    interface_ip: str | None = None,
+    proxy_url: str | None = None,
+    portable_mode: bool = False,
+    fake_uuid: str = "",
+    fake_hostname: str = ""
 ) -> int:
     log_path = os.path.join(ZAAP_PATH, "gamesLogs", "retro")
 
@@ -49,13 +56,13 @@ def launch_retro_exe(
         "ZAAP_RELEASE": "main",
     }
 
-    fake_hostname = generate_fake_hostname()
-    logger.info(f"[RETRO] Instance {instance_id} fake hostname: {fake_hostname}")
+    if portable_mode:
+        logger.info(f"[RETRO] Instance {instance_id} spoofing hostname: {fake_hostname}")
 
     pid = frida.spawn(program=command, env=env)
 
     load_frida_script(
-        pid, port, interface_ip=interface_ip, fake_hostname=fake_hostname, resume=True
+        pid, port, interface_ip=interface_ip, proxy_url=proxy_url, portable_mode=portable_mode, fake_hostname=fake_hostname, fake_uuid=fake_uuid, resume=True
     )
 
     return pid
@@ -65,7 +72,10 @@ def load_frida_script(
     pid: int,
     port: int,
     interface_ip: str | None = None,
+    proxy_url: str | None = None,
+    portable_mode: bool = False,
     fake_hostname: str = "",
+    fake_uuid: str = "",
     resume: bool = False,
 ):
     session = frida.attach(pid)
@@ -87,7 +97,10 @@ def load_frida_script(
                     child_pid,
                     port,
                     interface_ip=interface_ip,
+                    proxy_url=proxy_url,
+                    portable_mode=portable_mode,
                     fake_hostname=fake_hostname,
+                    fake_uuid=fake_uuid,
                     resume=False,
                 )
 
@@ -103,7 +116,10 @@ def load_frida_script(
         "retroCdn": json.loads(RETRO_CDN),
         "port": port,
         "proxyIp": proxy_ip,
+        "proxyUrl": proxy_url,
+        "portableMode": portable_mode,
         "fakeHostname": fake_hostname,
+        "fakeUuid": fake_uuid,
     }
     script.post(config)
 

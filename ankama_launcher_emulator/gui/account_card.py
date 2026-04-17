@@ -8,6 +8,7 @@ from qfluentwidgets import (
     ComboBox,
     PrimaryPushButton,
     PushButton,
+    SwitchButton,
 )
 
 from ankama_launcher_emulator.gui.consts import (
@@ -20,6 +21,7 @@ from ankama_launcher_emulator.gui.consts import (
 )
 from ankama_launcher_emulator.gui.utils import run_in_background
 from ankama_launcher_emulator.utils.proxy_store import ProxyStore
+from ankama_launcher_emulator.haapi.account_meta import AccountMeta
 
 
 class AccountCard(CardWidget):
@@ -72,6 +74,16 @@ class AccountCard(CardWidget):
         identity_layout.addWidget(self._meta_label)
         layout.addLayout(identity_layout, 0, 0)
 
+        self._portable_switch = SwitchButton(parent=self)
+        self._portable_switch.setOnText("Portable")
+        self._portable_switch.setOffText("Official")
+        
+        meta = AccountMeta()
+        entry = meta.get(self.login) or {}
+        self._portable_switch.setChecked(entry.get("portable_mode", False))
+        self._portable_switch.checkedChanged.connect(self._on_portable_toggled)
+        layout.addWidget(self._portable_switch, 0, 1)
+
         self._status_dot = QLabel()
         self._status_dot.setFixedSize(10, 10)
         self._status_dot.setStyleSheet(
@@ -91,18 +103,18 @@ class AccountCard(CardWidget):
                 f"{display_name}\t{public_ip}",
                 userData=ip_value,
             )
-        layout.addWidget(self._ip_combo, 0, 1)
+        layout.addWidget(self._ip_combo, 0, 2)
 
         self._proxy_combo = ComboBox()
         self._proxy_combo.setMinimumWidth(220)
         self._refresh_proxy_combo()
         self._proxy_combo.currentIndexChanged.connect(self._on_proxy_changed)
-        layout.addWidget(self._proxy_combo, 0, 2)
+        layout.addWidget(self._proxy_combo, 0, 3)
 
         self._test_proxy_btn = PushButton("Test")
         self._test_proxy_btn.setFixedWidth(68)
         self._test_proxy_btn.clicked.connect(self._on_test_proxy)
-        layout.addWidget(self._test_proxy_btn, 0, 3)
+        layout.addWidget(self._test_proxy_btn, 0, 4)
 
         self._launch_btn = PrimaryPushButton("Launch")
         self._launch_btn.setFixedWidth(110)
@@ -110,7 +122,7 @@ class AccountCard(CardWidget):
             f"PrimaryPushButton {{ background-color: {ORANGE_HEXA}; }}"
         )
         self._launch_btn.clicked.connect(self._on_btn_clicked)
-        layout.addWidget(self._launch_btn, 0, 4)
+        layout.addWidget(self._launch_btn, 0, 5)
 
         self._remove_btn = PushButton("X")
         self._remove_btn.setFixedWidth(36)
@@ -119,6 +131,10 @@ class AccountCard(CardWidget):
         layout.setColumnStretch(0, 2)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(2, 1)
+        layout.setColumnStretch(3, 1)
+
+    def _on_portable_toggled(self, checked: bool) -> None:
+        AccountMeta().set_portable_mode(self.login, checked)
 
     def _refresh_proxy_combo(self) -> None:
         current_pid = self._proxy_combo.currentData()
@@ -127,9 +143,12 @@ class AccountCard(CardWidget):
         self._proxy_combo.addItem("No proxy", userData=None)
 
         proxies = self._proxy_store.list_proxies()
+        meta = AccountMeta()
         for pid, entry in proxies.items():
             label = entry.name
-            if entry.exit_ip:
+            if meta.is_proxy_used(entry.url, exclude_login=self.login):
+                label += " [In Use]"
+            elif entry.exit_ip:
                 label += f" ({entry.exit_ip})"
             self._proxy_combo.addItem(label, userData=pid)
 
@@ -149,6 +168,16 @@ class AccountCard(CardWidget):
     def _on_proxy_changed(self) -> None:
         proxy_id = self._proxy_combo.currentData()
         self._proxy_store.assign_proxy(self.login, proxy_id)
+        
+        # Sync Proxy URL into AccountMeta for Portable decoupled flow access
+        meta = AccountMeta()
+        if proxy_id:
+            proxy_url = self._proxy_store.get_proxy_url(self.login)
+            if proxy_url and meta.is_proxy_used(proxy_url, exclude_login=self.login):
+                self.error_occurred.emit("Warning: This proxy is already in use by another account.")
+            meta.set_proxy(self.login, proxy_url)
+        else:
+            meta.set_proxy(self.login, None)
 
     def _on_test_proxy(self) -> None:
         proxy_id = self._proxy_combo.currentData()

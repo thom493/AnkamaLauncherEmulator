@@ -8,10 +8,6 @@ import os
 
 import requests
 
-from ankama_launcher_emulator.consts import (
-    API_KEY_FOLDER_PATH,
-    CERTIFICATE_FOLDER_PATH,
-)
 from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
 from ankama_launcher_emulator.haapi.account_meta import AccountMeta
 from ankama_launcher_emulator.haapi.urls import ANKAMA_API_DELETE_API_KEY
@@ -43,21 +39,22 @@ def remove_account(login: str, api_key: str | None = None) -> None:
         except Exception as err:
             logger.warning(f"[REMOVE] Server-side key deletion failed: {err}")
 
-    # 2. Delete keydata file
+    # 2. Delete keydata + certificate from active path (mode-aware)
+    uuid_active, cert_folder, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+
     try:
-        stored = CryptoHelper.getStoredApiKey(login)
-        file_path = os.path.join(API_KEY_FOLDER_PATH, stored["apikeyFile"])
+        stored = CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)
+        file_path = os.path.join(key_folder, stored["apikeyFile"])
         os.unlink(file_path)
-        logger.info(f"[REMOVE] Deleted keydata {stored['apikeyFile']}")
+        logger.info(f"[REMOVE] Deleted keydata {stored['apikeyFile']} from {key_folder}")
     except (StopIteration, FileNotFoundError, OSError) as err:
         logger.warning(f"[REMOVE] Keydata deletion: {err}")
 
-    # 3. Delete certificate file
     try:
         cert_hash = CryptoHelper.createHashFromStringSha(login)
-        cert_path = os.path.join(CERTIFICATE_FOLDER_PATH, f".certif{cert_hash}")
+        cert_path = os.path.join(cert_folder, f".certif{cert_hash}")
         os.unlink(cert_path)
-        logger.info(f"[REMOVE] Deleted certificate for {login}")
+        logger.info(f"[REMOVE] Deleted certificate for {login} from {cert_folder}")
     except (FileNotFoundError, OSError) as err:
         logger.warning(f"[REMOVE] Certificate deletion: {err}")
 

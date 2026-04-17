@@ -8,10 +8,8 @@ Two modes:
 import hashlib
 import base64
 import logging
-import os
 import random
 import re
-import time
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Callable
@@ -380,69 +378,3 @@ def programmatic_pkce_login(
     }
 
 
-# --- OAuth refresh through proxy ---
-
-
-def refresh_token_via_proxy(refresh_token: str, proxy_url: str) -> dict:
-    """Refresh OAuth token through proxy to rebind API key to proxy IP.
-
-    POST auth.ankama.com/token with grant_type=refresh_token.
-    Returns {access_token, refresh_token}.
-    """
-    session = requests.Session()
-    h_url = to_socks5h(proxy_url)
-    session.proxies = {"http": h_url, "https": h_url}
-
-    payload = urlencode(
-        {
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": ZAAP_CLIENT_ID,
-        }
-    )
-
-    response = session.post(
-        f"{AUTH_BASE}/token",
-        headers={
-            "User-Agent": f"Zaap {ZAAP_VERSION}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        data=payload,
-        verify=False,
-    )
-    response.raise_for_status()
-    body = response.json()
-    logger.info("[PROXY_REFRESH] Token refresh through proxy successful")
-    return {
-        "access_token": body["access_token"],
-        "refresh_token": body.get("refresh_token"),
-    }
-
-
-def refresh_api_key_for_proxy(login: str, proxy_url: str) -> None:
-    """Refresh OAuth token through proxy and update stored keydata.
-
-    Rebinds the API key to the proxy IP so HAAPI calls through proxy succeed.
-    Skips silently if no refresh_token available.
-    """
-    from ankama_launcher_emulator.consts import API_KEY_FOLDER_PATH
-    from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
-    from ankama_launcher_emulator.decrypter.device import Device
-
-    stored = CryptoHelper.getStoredApiKey(login)
-    apikey_data = stored["apikey"]
-    rt = apikey_data.get("refreshToken")
-    if not rt:
-        logger.warning(f"[PROXY_REFRESH] No refresh token for {login}, skipping")
-        return
-
-    tokens = refresh_token_via_proxy(rt, proxy_url)
-
-    apikey_data["key"] = tokens["access_token"]
-    if tokens.get("refresh_token"):
-        apikey_data["refreshToken"] = tokens["refresh_token"]
-    apikey_data["refreshDate"] = int(time.time() * 1000)
-
-    file_path = os.path.join(API_KEY_FOLDER_PATH, stored["apikeyFile"])
-    CryptoHelper.encryptToFile(file_path, apikey_data, Device.getUUID())
-    logger.info(f"[PROXY_REFRESH] Token refreshed and stored for {login}")

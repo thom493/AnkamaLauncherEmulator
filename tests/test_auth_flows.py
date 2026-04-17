@@ -219,21 +219,20 @@ class AuthFlowTests(unittest.TestCase):
             "access-token",
             "refresh-token",
             alias="Demo",
-            hm1=None,
         )
 
-    def test_account_meta_set_hm1_clears_stale_values(self):
+    def test_account_meta_set_meta_adds_meta(self):
         from ankama_launcher_emulator.haapi.account_meta import AccountMeta
 
         meta = AccountMeta()
-        meta._data = {"demo@example.com": {"hm1": "deadbeef", "source": "managed"}}
+        meta._data = {"demo@example.com": {"fake_uuid": "deadbeef", "source": "managed"}}
 
         with patch.object(meta, "_save") as save:
-            meta.set_hm1("demo@example.com", None)
+            meta.set_meta("demo@example.com", source="other")
 
         self.assertEqual(
             meta._data["demo@example.com"],
-            {"source": "managed"},
+            {"fake_uuid": "deadbeef", "source": "other"},
         )
         save.assert_called_once()
 
@@ -354,7 +353,6 @@ class AuthFlowTests(unittest.TestCase):
             "access-token",
             "refresh-token",
             alias="Demo",
-            hm1=None,
         )
         window._proxy_store.save_validated.assert_called_once_with(
             "demo@example.com",
@@ -390,8 +388,10 @@ class AuthFlowTests(unittest.TestCase):
 
     @patch("ankama_launcher_emulator.server.handler.AccountMeta")
     @patch("ankama_launcher_emulator.server.handler.CryptoHelper.getStoredCertificate")
+    @patch("ankama_launcher_emulator.server.handler.CryptoHelper.createHmEncoders")
     def test_auth_get_game_token_notifies_shield_recovery_callback(
         self,
+        create_hm_encoders,
         get_stored_certificate,
         account_meta,
     ):
@@ -406,8 +406,7 @@ class AuthFlowTests(unittest.TestCase):
             haapi=haapi,
         )
         get_stored_certificate.side_effect = FileNotFoundError
-        account_meta.return_value.get_hm1.return_value = "hm1"
-        account_meta.return_value.get_hm2.return_value = "hm2"
+        create_hm_encoders.return_value = ("hm1", "hm2")
         recovery_callback = MagicMock()
         handler.on_shield_recovery = recovery_callback
 
