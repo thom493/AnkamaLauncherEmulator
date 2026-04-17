@@ -546,9 +546,13 @@ class MainWindow(QMainWindow):
             card.set_launch_enabled(True)
             return
 
+        browser_cookies = dialog.get_cookies()
+
         def reauth_and_relaunch(on_progress: Callable[[str], None]) -> int:
             on_progress("Signing in again...")
-            data = complete_embedded_login(auth_code, session, login)
+            data = complete_embedded_login(
+                auth_code, session, login, cookies=browser_cookies
+            )
             alias = cast(str | None, (AccountMeta().get(login) or {}).get("alias"))
             if alias is None:
                 alias = cast(str | None, data.get("nickname")) or None
@@ -670,9 +674,13 @@ class MainWindow(QMainWindow):
             card.set_launch_enabled(True)
             return
 
+        browser_cookies = dialog.get_cookies()
+
         def reauth(on_progress: Callable[[str], None]) -> dict:
             on_progress("Signing in again...")
-            data = complete_embedded_login(auth_code, session, login)
+            data = complete_embedded_login(
+                auth_code, session, login, cookies=browser_cookies
+            )
             proxy_url = cast(
                 str | None,
                 (AccountMeta().get(login) or {}).get("proxy_url"),

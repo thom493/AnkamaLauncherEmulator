@@ -170,10 +170,11 @@ class AddAccountDialog(QDialog):
             self._status_label.setText("Browser login cancelled")
             return
 
+        browser_cookies = dialog.get_cookies()
         self._status_label.setText("Completing browser login...")
 
         def task(_on_progress: object) -> dict:
-            tokens = session.exchange(code)
+            tokens = session.exchange(code, cookies=browser_cookies)
             account = fetch_account_profile(tokens["access_token"])
             if not account.get("id"):
                 raise RuntimeError("Failed to get account info")

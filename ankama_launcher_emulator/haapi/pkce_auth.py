@@ -60,11 +60,15 @@ def exchange_code_for_token(
     code: str,
     code_verifier: str,
     redirect_uri: str = LOCAL_REDIRECT_URI,
+    cookies: dict[str, str] | None = None,
 ) -> dict:
     """Exchange authorization code for access_token + refresh_token.
 
     Token exchange always goes direct (no proxy) — auth.ankama.com
     blocks proxy IPs on the /token endpoint.
+
+    cookies: pass browser cookies (e.g. aws-waf-token) captured during
+    the embedded login so AWS WAF does not 403 the token call.
     """
     payload = (
         f"grant_type=authorization_code"
@@ -81,6 +85,7 @@ def exchange_code_for_token(
             "Content-Type": "application/x-www-form-urlencoded",
         },
         data=payload,
+        cookies=cookies or None,
         verify=False,
     )
     response.raise_for_status()
@@ -174,16 +179,22 @@ class ZaapPkceSession:
             redirect_uri=ZAAP_REDIRECT_URI,
         )
 
-    def exchange(self, code: str) -> dict:
+    def exchange(self, code: str, cookies: dict[str, str] | None = None) -> dict:
         return exchange_code_for_token(
             code=code,
             code_verifier=self.code_verifier,
             redirect_uri=ZAAP_REDIRECT_URI,
+            cookies=cookies,
         )
 
 
-def complete_embedded_login(code: str, session: ZaapPkceSession, login: str) -> dict:
-    tokens = session.exchange(code)
+def complete_embedded_login(
+    code: str,
+    session: ZaapPkceSession,
+    login: str,
+    cookies: dict[str, str] | None = None,
+) -> dict:
+    tokens = session.exchange(code, cookies=cookies)
     account = fetch_account_profile(tokens["access_token"])
     if not account.get("id"):
         raise RuntimeError("Failed to get account info")
