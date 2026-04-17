@@ -1,6 +1,6 @@
 """Embedded browser dialog for Ankama PKCE authentication."""
 
-from PyQt6.QtCore import QUrl, pyqtSignal
+from PyQt6.QtCore import QTimer, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
 from qfluentwidgets import BodyLabel
 
@@ -87,3 +87,25 @@ class EmbeddedAuthBrowserDialog(QDialog):
 
     def get_cookies(self) -> dict[str, str]:
         return dict(self._cookies)
+
+    def done(self, result: int) -> None:
+        # Chromium requires the page-adapter to be torn down before the
+        # profile-adapter. QObject child destruction order is arbitrary,
+        # and QWebEngineView.setPage does not reparent, so without this
+        # the profile can be destroyed with live pages still registered —
+        # "Release of profile requested but WebEnginePage still not
+        # deleted" — leaking renderer state until app exit.
+        if self._browser is not None:
+            self._browser.setPage(None)
+        if self._page is not None:
+            page = self._page
+            self._page = None
+            page.setParent(None)
+            page.deleteLater()
+        if self._profile is not None:
+            profile = self._profile
+            self._profile = None
+            profile.setParent(None)
+            # Defer one event-loop turn so page's DeferredDelete fires first.
+            QTimer.singleShot(0, profile.deleteLater)
+        super().done(result)
