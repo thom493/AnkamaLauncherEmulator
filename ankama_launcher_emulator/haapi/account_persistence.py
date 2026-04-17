@@ -37,6 +37,40 @@ def persist_managed_account(
     meta.set_meta(login, source="managed", alias=alias)
 
 
+def list_all_api_keys() -> list:
+    """Enumerate all known accounts across portable + official keydata folders.
+
+    Source of truth: AccountMeta (each entry resolves to its own crypto context).
+    Also scans the official folder for pre-meta legacy files.
+    """
+    from ankama_launcher_emulator.consts import API_KEY_FOLDER_PATH
+    from ankama_launcher_emulator.decrypter.device import Device
+    from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+    seen: set[str] = set()
+    results: list = []
+
+    meta = AccountMeta()
+    for login in meta.all_entries():
+        try:
+            uuid_active, _, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+            results.append(CryptoHelper.getStoredApiKey(login, key_folder, uuid_active))
+            seen.add(login)
+        except (StopIteration, FileNotFoundError, OSError) as err:
+            logger.warning(f"[LOAD] Skip {login}: {err}")
+
+    try:
+        for acc in CryptoHelper.getStoredApiKeys(API_KEY_FOLDER_PATH, Device.getUUID()):
+            login = acc["apikey"]["login"]
+            if login not in seen:
+                results.append(acc)
+                seen.add(login)
+    except (FileNotFoundError, OSError) as err:
+        logger.warning(f"[LOAD] Official folder scan failed: {err}")
+
+    return results
+
+
 def persist_token_refresh(
     login: str,
     access_token: str,

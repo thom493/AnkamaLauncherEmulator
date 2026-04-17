@@ -769,9 +769,8 @@ class MainWindow(QMainWindow):
         self._is_refreshing = True
 
         def fetch(_on_progress: Callable) -> tuple:
-            from ankama_launcher_emulator.consts import API_KEY_FOLDER_PATH
-            from ankama_launcher_emulator.decrypter.device import Device
-            return CryptoHelper.getStoredApiKeys(API_KEY_FOLDER_PATH, Device.getUUID()), get_available_network_interfaces()
+            from ankama_launcher_emulator.haapi.account_persistence import list_all_api_keys
+            return list_all_api_keys(), get_available_network_interfaces()
 
         def on_success(result: object) -> None:
             accounts, interfaces = cast(tuple, result)

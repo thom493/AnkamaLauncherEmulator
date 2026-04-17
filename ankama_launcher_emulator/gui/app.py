@@ -10,8 +10,8 @@ from qfluentwidgets import (
 )
 
 from ankama_launcher_emulator.consts import RESOURCES
-from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
 from ankama_launcher_emulator.gui.main_window import MainWindow
+from ankama_launcher_emulator.haapi.account_persistence import list_all_api_keys
 from ankama_launcher_emulator.server.handler import AnkamaLauncherHandler
 from ankama_launcher_emulator.server.server import AnkamaLauncherServer
 from ankama_launcher_emulator.utils.internet import get_available_network_interfaces
@@ -36,7 +36,7 @@ def run_gui() -> None:
     server = AnkamaLauncherServer(handler)
     server.start()
 
-    accounts = CryptoHelper.getStoredApiKeys()
+    accounts = list_all_api_keys()
     interfaces = get_available_network_interfaces()
 
     app = ensure_app()
