@@ -2,11 +2,13 @@ import contextlib
 import io
 import sys
 
-from PyQt6.QtCore import qInstallMessageHandler
+from PyQt6.QtCore import Qt, QCoreApplication, qInstallMessageHandler
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication,
 )
+
+QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
 with contextlib.redirect_stdout(io.StringIO()):
     from qfluentwidgets import (
