@@ -3,6 +3,7 @@
 import importlib
 import logging
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -73,13 +74,55 @@ class AddAccountDialog(QDialog):
         initial_alias: str | None = None,
     ):
         super().__init__(parent)
+        # Self-destruct on close so QWebEngine grandchildren (from the
+        # embedded auth dialog) don't linger as MainWindow descendants —
+        # otherwise the main window freezes after a Shield-path add-account.
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._proxy_store = proxy_store
         self._locked_login = locked_login
         self._initial_proxy_id = initial_proxy_id
         self._initial_alias = initial_alias
+        # Defer actual close until in-flight background workers finish, so
+        # destroying the dialog (and its QThread children) can't race with
+        # a still-running worker.
+        self._inflight: int = 0
+        self._pending_done: int | None = None
         self.setWindowTitle("Reconnect Account" if locked_login else "Add Account")
         self.setMinimumWidth(450)
         self._setup_ui()
+
+    def _run_worker(self, task, on_success, on_error) -> None:
+        self._inflight += 1
+
+        def wrapped_success(result: object) -> None:
+            try:
+                on_success(result)
+            finally:
+                self._on_worker_done()
+
+        def wrapped_error(err: object) -> None:
+            try:
+                on_error(err)
+            finally:
+                self._on_worker_done()
+
+        run_in_background(
+            task, on_success=wrapped_success, on_error=wrapped_error, parent=self
+        )
+
+    def _on_worker_done(self) -> None:
+        self._inflight -= 1
+        if self._inflight == 0 and self._pending_done is not None:
+            result = self._pending_done
+            self._pending_done = None
+            super().done(result)
+
+    def done(self, result: int) -> None:
+        if self._inflight > 0:
+            self._pending_done = result
+            self.hide()
+            return
+        super().done(result)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -185,7 +228,7 @@ class AddAccountDialog(QDialog):
             else:
                 self._status_label.setText(f"Error: {err}")
 
-        run_in_background(task, on_success=on_success, on_error=on_error, parent=self)
+        self._run_worker(task, on_success=on_success, on_error=on_error)
 
     def _start_browser_login(
         self,
@@ -246,7 +289,7 @@ class AddAccountDialog(QDialog):
             self._add_btn.setEnabled(True)
             self._status_label.setText(f"Error: {err}")
 
-        run_in_background(task, on_success=on_success, on_error=on_error, parent=self)
+        self._run_worker(task, on_success=on_success, on_error=on_error)
 
     def _set_status(self, msg: str) -> None:
         self._status_label.setText(msg)
@@ -303,8 +346,8 @@ class AddAccountDialog(QDialog):
             self._add_btn.setEnabled(True)
             self._status_label.setText(f"Shield error: {err}")
 
-        run_in_background(
-            request_code, on_success=on_code_requested, on_error=on_error, parent=self
+        self._run_worker(
+            request_code, on_success=on_code_requested, on_error=on_error
         )
 
     def _show_shield_dialog(self, data: dict, login: str, alias: str | None) -> None:
@@ -346,8 +389,8 @@ class AddAccountDialog(QDialog):
             self._add_btn.setEnabled(True)
             self._status_label.setText(f"Validation failed: {err}")
 
-        run_in_background(
-            validate, on_success=on_validated, on_error=on_error, parent=self
+        self._run_worker(
+            validate, on_success=on_validated, on_error=on_error
         )
 
     def _persist_account(

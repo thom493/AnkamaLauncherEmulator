@@ -26,7 +26,13 @@ from ankama_launcher_emulator.interfaces.deciphered_cert import (
 class CryptoHelper:
     @staticmethod
     def get_crypto_context(login: str) -> tuple[str, str, str, str, str]:
-        """Returns (uuid_to_use, cert_folder, key_folder, hm1, hm2) depending on portable mode."""
+        """Returns (uuid_to_use, cert_folder, key_folder, hm1, hm2) depending on portable mode.
+
+        Portable accounts get an isolated `{ALT_*}/{sha256(login)[:32]}/`
+        subfolder so cross-account ciphertext can never collide during
+        folder scans (each subfolder holds exactly one account's files,
+        encrypted with that account's fake_uuid).
+        """
         from ankama_launcher_emulator.haapi.account_meta import AccountMeta
         from ankama_launcher_emulator.decrypter.device import Device
         from ankama_launcher_emulator.consts import (
@@ -37,13 +43,45 @@ class CryptoHelper:
         entry = meta.get(login) or {}
         portable = entry.get("portable_mode", False)
         fake_uuid = entry.get("fake_uuid")
-        
+
         if portable and fake_uuid:
-            return (fake_uuid, ALT_CERTIFICATE_FOLDER_PATH, ALT_API_KEY_FOLDER_PATH, 
+            sub = CryptoHelper.createHashFromStringSha(login)
+            cert_dir = os.path.join(ALT_CERTIFICATE_FOLDER_PATH, sub)
+            key_dir = os.path.join(ALT_API_KEY_FOLDER_PATH, sub)
+            os.makedirs(cert_dir, exist_ok=True)
+            os.makedirs(key_dir, exist_ok=True)
+            CryptoHelper._migrate_flat_to_subfolder(login, ALT_API_KEY_FOLDER_PATH, key_dir, ".key")
+            CryptoHelper._migrate_flat_to_subfolder(login, ALT_CERTIFICATE_FOLDER_PATH, cert_dir, ".certif")
+            return (fake_uuid, cert_dir, key_dir,
                     str(entry.get("fake_hm1") or ""), str(entry.get("fake_hm2") or ""))
-            
+
         hm1, hm2 = CryptoHelper.createHmEncoders()
         return Device.getUUID(), CERTIFICATE_FOLDER_PATH, API_KEY_FOLDER_PATH, hm1, hm2
+
+    @staticmethod
+    def _migrate_flat_to_subfolder(login: str, flat_dir: str, sub_dir: str, prefix: str) -> None:
+        """Move a legacy flat-layout portable file into its per-account subfolder.
+
+        Pre-D portable layout wrote `{ALT_*}/{prefix}{sha(login)}` directly
+        in the shared ALT folder. After D, the canonical path is
+        `{ALT_*}/{sha(login)}/{prefix}{sha(login)}`. Rename in place if
+        the flat file exists and the subfolder slot is empty.
+        """
+        import logging
+        name = prefix + CryptoHelper.createHashFromStringSha(login)
+        src = os.path.join(flat_dir, name)
+        dst = os.path.join(sub_dir, name)
+        if not os.path.isfile(src) or os.path.exists(dst):
+            return
+        try:
+            os.replace(src, dst)
+            logging.getLogger().info(
+                f"[MIGRATE] {login}: moved {name} from flat ALT folder into per-account subfolder"
+            )
+        except OSError as err:
+            logging.getLogger().warning(
+                f"[MIGRATE] {login}: failed to move {name}: {err!r}"
+            )
     @staticmethod
     def getStoredCertificate(login: str, cert_folder_path: str, uuid_auth: str) -> StoredCertificate:
         file_path = os.path.join(
@@ -65,9 +103,12 @@ class CryptoHelper:
         for apikey_file in os.listdir(api_key_folder_path):
             if not apikey_file.startswith(".key"):
                 continue
+            full_path = os.path.join(api_key_folder_path, apikey_file)
+            if not os.path.isfile(full_path):
+                continue
             try:
                 apikey_data: DecipheredApiKeyDatas = CryptoHelper.decryptFromFile(
-                    os.path.join(api_key_folder_path, apikey_file), uuid_auth
+                    full_path, uuid_auth
                 )
             except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
                 continue
