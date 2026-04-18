@@ -156,21 +156,21 @@ class EmbeddedAuthBrowserDialog(QDialog):
             f"&client_id={_ZAAP_CLIENT_ID}"
             f"&code_verifier={quote(self._code_verifier or '', safe='')}"
         )
-        js = (
-            "(function(){"
-            f"  fetch('{_AUTH_TOKEN_URL}',{{"
-            "    method:'POST',"
-            "    headers:{'Content-Type':'application/x-www-form-urlencoded'},"
-            f"   body:'{payload}'"
-            "  }}).then(function(r){"
-            "    return r.text().then(function(t){return [r.status,t];});"
-            "  }).then(function(pair){"
-            f"   window.location.href='{_RESULT_SCHEME}://'+pair[0]+'/'+encodeURIComponent(pair[1]);"
-            "  }).catch(function(e){"
-            f"   window.location.href='{_RESULT_SCHEME}://0/'+encodeURIComponent('js-error:'+String(e));"
-            "  });"
-            "})();"
-        )
+        # Triple-quoted f-string: {{ → { and }} → } so brace nesting is explicit.
+        # .then/.catch hang off fetch() directly; IIFE body closes last via }}).
+        js = f"""(function(){{
+    fetch('{_AUTH_TOKEN_URL}', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+        body: '{payload}'
+    }}).then(function(r){{
+        return r.text().then(function(t){{ return [r.status, t]; }});
+    }}).then(function(pair){{
+        window.location.href = '{_RESULT_SCHEME}://' + pair[0] + '/' + encodeURIComponent(pair[1]);
+    }}).catch(function(e){{
+        window.location.href = '{_RESULT_SCHEME}://0/' + encodeURIComponent('err:' + String(e));
+    }});
+}})();"""
         self._page.runJavaScript(js)
 
     def _on_token_exchange_done(self, status: int, body: str) -> None:
