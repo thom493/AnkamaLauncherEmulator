@@ -29,15 +29,26 @@ from ankama_launcher_emulator.haapi.account_meta import AccountMeta
 
 
 def has_active_credentials(login: str) -> bool:
-    """True if the active (portable or official) folders hold both key and cert."""
+    """True if the active (portable or official) folders hold both key and cert.
+
+    Key files written by official Zaap don't follow our `.key{sha256(login)[:32]}`
+    naming, so probe via getStoredApiKey (iterate + decrypt) to match the same
+    lookup used at launch.
+    """
     try:
-        _, cert_folder, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+        uuid_active, cert_folder, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
     except (FileNotFoundError, OSError):
         return False
-    hash_suffix = CryptoHelper.createHashFromStringSha(login)
-    key_path = os.path.join(key_folder, ".key" + hash_suffix)
-    cert_path = os.path.join(cert_folder, ".certif" + hash_suffix)
-    return os.path.exists(key_path) and os.path.exists(cert_path)
+    cert_path = os.path.join(
+        cert_folder, ".certif" + CryptoHelper.createHashFromStringSha(login)
+    )
+    if not os.path.exists(cert_path):
+        return False
+    try:
+        CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)
+    except (StopIteration, FileNotFoundError, OSError):
+        return False
+    return True
 
 
 class AccountCard(CardWidget):
