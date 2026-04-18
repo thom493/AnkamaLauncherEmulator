@@ -53,3 +53,6 @@ docs/superpowers/specs/2026-04-15-launcher-gui-refresh-design.md
 .worktrees/
 
 old_version/
+
+tests/.env
+tests/debug_dumps/
