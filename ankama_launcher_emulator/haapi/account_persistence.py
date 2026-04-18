@@ -106,6 +106,7 @@ def list_all_api_keys() -> list:
     results: list = []
 
     meta = AccountMeta()
+    meta.repair_corrupt_entries()
     for login in meta.all_entries():
         try:
             uuid_active, _, key_folder, _, _ = CryptoHelper.get_crypto_context(login)

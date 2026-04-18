@@ -75,7 +75,7 @@ class AccountMeta:
 
     def generate_fake_profile(self, login: str) -> None:
         entry = self._data.get(login, {})
-        if "fake_uuid" not in entry:
+        if not entry.get("fake_uuid"):
             import uuid, hashlib, random, string
             fake_uuid = str(uuid.uuid4())
             fake_machine_id = hashlib.sha256(fake_uuid.encode('utf-8')).hexdigest()
@@ -94,8 +94,8 @@ class AccountMeta:
             entry["fake_hm1"] = fake_hm1
             entry["fake_hm2"] = fake_hm1[::-1]
             entry["fake_hostname"] = "DESKTOP-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=7))
-            entry["portable_mode"] = False
-            entry["proxy_url"] = None
+            entry.setdefault("portable_mode", False)
+            entry.setdefault("proxy_url", None)
             
             self._data[login] = entry
             self._save()
@@ -105,6 +105,11 @@ class AccountMeta:
         entry["portable_mode"] = portable
         self._data[login] = entry
         self._save()
+        # Portable mode requires a fake hardware fingerprint — generate one
+        # on first toggle so get_crypto_context never falls back to real
+        # Device.getUUID() with the ALT folder (would hash-mismatch every read).
+        if portable:
+            self.generate_fake_profile(login)
 
     def set_proxy(self, login: str, proxy_url: str | None) -> None:
         entry = self._data.get(login, {})
@@ -150,6 +155,20 @@ class AccountMeta:
                 return True
         return False
 
+
+    def repair_corrupt_entries(self) -> int:
+        """Heal entries with portable_mode=True but missing/falsy fake_uuid.
+
+        Such entries cannot resolve to ALT folder credentials and would skip
+        at load. Regenerates the fake profile in place. Returns count repaired.
+        """
+        repaired = 0
+        for login, entry in list(self._data.items()):
+            if entry.get("portable_mode") and not entry.get("fake_uuid"):
+                self.generate_fake_profile(login)
+                logger.info(f"[REPAIR] {login}: generated missing fake profile for portable entry")
+                repaired += 1
+        return repaired
 
     def set_hm1(self, login: str, hm1: str | None) -> None:
         pass # Obsolete: Handled by generate_fake_profile
