@@ -2,11 +2,15 @@
 
 Token exchange is performed inside Chromium via JS fetch() to avoid
 AWS WAF TLS-fingerprint mismatch that causes 403 when using requests.
+
+Result is signaled back from JS via document.title — Chromium silently
+drops navigations to unregistered custom URL schemes (the previous
+qt-token-result:// approach), so the title channel is used instead.
 """
 
 import json
 import logging
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from PyQt6.QtCore import QTimer, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
@@ -17,17 +21,22 @@ logger = logging.getLogger(__name__)
 _AUTH_TOKEN_URL = "https://auth.ankama.com/token"
 _ZAAP_CLIENT_ID = 102
 _ZAAP_REDIRECT_URI = "zaap://login"
-_RESULT_SCHEME = "qt-token-result"
+_TITLE_PREFIX = "__TOKEN__:"
 
 
 def _build_embedded_auth_page_class():
     from PyQt6.QtWebEngineCore import QWebEnginePage
 
     class _EmbeddedAuthPage(QWebEnginePage):
-        """Intercept zaap://login and qt-token-result:// navigations."""
+        """Intercept zaap://login navigations and emit token result on titleChanged."""
 
         code_received = pyqtSignal(str)
         token_exchange_done = pyqtSignal(int, str)  # http_status, body
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._seen_code: str | None = None
+            self.titleChanged.connect(self._on_title_changed)
 
         def acceptNavigationRequest(
             self,
@@ -42,22 +51,25 @@ def _build_embedded_auth_page_class():
                 from PyQt6.QtCore import QUrlQuery
                 query = QUrlQuery(url)
                 code = query.queryItemValue("code")
-                if code:
+                if code and code != self._seen_code:
+                    self._seen_code = code
                     self.code_received.emit(code)
                 return False
 
-            if scheme == _RESULT_SCHEME:
-                # qt-token-result://{status}/{percent-encoded-body}
-                try:
-                    status = int(url.host() or "0")
-                except ValueError:
-                    status = 0
-                encoded_body = url.path().lstrip("/")
-                body = QUrl.fromPercentEncoding(encoded_body.encode("ascii", errors="replace"))
-                self.token_exchange_done.emit(status, body)
-                return False
-
             return True
+
+        def _on_title_changed(self, title: str) -> None:
+            if not title.startswith(_TITLE_PREFIX):
+                return
+            payload = title[len(_TITLE_PREFIX):]
+            try:
+                sep = payload.index(":")
+                status = int(payload[:sep])
+            except (ValueError, IndexError):
+                logger.warning("[PKCE/browser] malformed token title: %s", title[:120])
+                return
+            body = unquote(payload[sep + 1:])
+            self.token_exchange_done.emit(status, body)
 
     return _EmbeddedAuthPage
 
@@ -146,8 +158,8 @@ class EmbeddedAuthBrowserDialog(QDialog):
         """Inject a JS fetch() POST to /token while still inside the browser session.
 
         auth.ankama.com/token is same-origin from the auth page, so CORS
-        is not a concern. The result is signaled back via qt-token-result://
-        navigation which acceptNavigationRequest intercepts.
+        is not a concern. The result is signaled back via document.title
+        which the page's titleChanged signal forwards to token_exchange_done.
         """
         payload = (
             f"grant_type=authorization_code"
@@ -166,9 +178,9 @@ class EmbeddedAuthBrowserDialog(QDialog):
     }}).then(function(r){{
         return r.text().then(function(t){{ return [r.status, t]; }});
     }}).then(function(pair){{
-        window.location.href = '{_RESULT_SCHEME}://' + pair[0] + '/' + encodeURIComponent(pair[1]);
+        document.title = '{_TITLE_PREFIX}' + pair[0] + ':' + encodeURIComponent(pair[1]);
     }}).catch(function(e){{
-        window.location.href = '{_RESULT_SCHEME}://0/' + encodeURIComponent('err:' + String(e));
+        document.title = '{_TITLE_PREFIX}0:' + encodeURIComponent('err:' + String(e));
     }});
 }})();"""
         self._page.runJavaScript(js)

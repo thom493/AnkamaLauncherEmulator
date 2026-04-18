@@ -16,10 +16,12 @@ from qfluentwidgets import (
     PasswordLineEdit,
     PrimaryPushButton,
     PushButton,
+    SwitchButton,
 )
 
 from ankama_launcher_emulator.gui.shield_dialog import ShieldCodeDialog
 from ankama_launcher_emulator.gui.utils import run_in_background
+from ankama_launcher_emulator.haapi.account_meta import AccountMeta
 from ankama_launcher_emulator.haapi.account_persistence import (
     persist_managed_account,
 )
@@ -115,6 +117,19 @@ class AddAccountDialog(QDialog):
             if idx >= 0:
                 self._proxy_combo.setCurrentIndex(idx)
         layout.addWidget(self._proxy_combo)
+
+        portable_row = QHBoxLayout()
+        portable_row.addWidget(BodyLabel("Portable mode (recommended — uses fake hardware fingerprint)"))
+        self._portable_switch = SwitchButton(parent=self)
+        # Default ON for new accounts. For reconnect, honor the existing entry's setting.
+        if self._locked_login:
+            existing = AccountMeta().get(self._locked_login) or {}
+            self._portable_switch.setChecked(bool(existing.get("portable_mode", True)))
+        else:
+            self._portable_switch.setChecked(True)
+        portable_row.addWidget(self._portable_switch)
+        portable_row.addStretch(1)
+        layout.addLayout(portable_row)
 
         self._status_label = CaptionLabel("")
         self._status_label.setWordWrap(True)
@@ -252,6 +267,17 @@ class AddAccountDialog(QDialog):
                 )
                 return
             login = self._locked_login
+
+        # Pre-create meta entry with the user's portable-mode choice BEFORE any
+        # downstream code (shield validate, persist) calls get_crypto_context.
+        # Otherwise that resolves to real Device.getUUID() / createHmEncoders()
+        # against the host hardware, which is wrong for portable accounts and
+        # also crashes on macOS dev (no /proc/cpuinfo).
+        meta = AccountMeta()
+        meta.set_meta(login, source="managed", alias=alias)
+        meta.set_portable_mode(login, self._portable_switch.isChecked())
+        if proxy_url is not None:
+            meta.set_proxy(login, proxy_url)
 
         security = data.get("security", [])
         needs_shield = "SHIELD" in security or "UNSECURED" in security
