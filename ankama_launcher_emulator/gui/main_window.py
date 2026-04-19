@@ -541,7 +541,7 @@ class MainWindow(QMainWindow):
             initial_alias=initial_alias,
         )
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        dialog.deleteLater()
+        dialog.request_delete()
         card.refresh_launch_button()
         if accepted:
             self._schedule_refresh()
@@ -787,7 +787,7 @@ class MainWindow(QMainWindow):
 
         dialog = AddAccountDialog(self._proxy_store, parent=self)
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
-        dialog.deleteLater()
+        dialog.request_delete()
         if accepted:
             self._schedule_refresh()
 

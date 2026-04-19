@@ -3,6 +3,7 @@
 import importlib
 import logging
 
+from PyQt6 import sip
 from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import (
     QDialog,
@@ -88,6 +89,10 @@ class AddAccountDialog(QDialog):
         # running" if the dialog is deleted before a worker finishes.
         self._threads: list[QThread] = []
         self._workers: list[Worker] = []
+        # When the outer exec() pops prematurely on Windows (WebEngine
+        # teardown corrupts the modal stack), the caller uses
+        # request_delete() to flag us for deleteLater after _inflight drains.
+        self._delete_after_finalise: bool = False
         self.setWindowTitle("Reconnect Account" if locked_login else "Add Account")
         self.setMinimumWidth(450)
         self._setup_ui()
@@ -105,17 +110,25 @@ class AddAccountDialog(QDialog):
 
         def wrapped_success(result: object) -> None:
             try:
-                if not self._cancelled:
-                    on_success(result)
+                # sip.isdeleted guards against the Windows race where the
+                # outer exec() popped early, caller deleteLater'd us, and
+                # a nested ShieldCodeDialog.exec() just pumped the
+                # DeferredDelete event that destroyed our C++ widgets.
+                if sip.isdeleted(self) or self._cancelled:
+                    return
+                on_success(result)
             finally:
-                self._on_worker_done()
+                if not sip.isdeleted(self):
+                    self._on_worker_done()
 
         def wrapped_error(err: object) -> None:
             try:
-                if not self._cancelled:
-                    on_error(err)
+                if sip.isdeleted(self) or self._cancelled:
+                    return
+                on_error(err)
             finally:
-                self._on_worker_done()
+                if not sip.isdeleted(self):
+                    self._on_worker_done()
 
         worker.success.connect(wrapped_success)
         worker.error.connect(wrapped_error)
@@ -138,6 +151,26 @@ class AddAccountDialog(QDialog):
         self._threads.clear()
         self._workers.clear()
         super().done(result)
+        if self._delete_after_finalise:
+            self.deleteLater()
+
+    def request_delete(self) -> None:
+        """Caller-side teardown hook — safe replacement for deleteLater.
+
+        On Windows WebEngine can make the outer exec() return before
+        done() is invoked. If workers are still in flight, deferring the
+        real deleteLater until they drain prevents a queued DeferredDelete
+        from firing inside a nested ShieldCodeDialog.exec() and destroying
+        widgets that pending callbacks still reference.
+        """
+        if self._inflight > 0:
+            self._cancelled = True
+            self._delete_after_finalise = True
+            if self._pending_done is None:
+                self._pending_done = QDialog.DialogCode.Rejected
+            self.hide()
+            return
+        self.deleteLater()
 
     def done(self, result: int) -> None:
         if result != QDialog.DialogCode.Accepted:

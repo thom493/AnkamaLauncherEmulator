@@ -473,7 +473,9 @@ def _run(args: argparse.Namespace) -> int:
     dbg.banner(f"DIALOG EXEC RETURNED {rc}")
     status = dialog._status_label.text() if _is_alive(dialog._status_label) else "<dead>"
     dbg.info(f"final dialog status: {status}")
-    dialog.deleteLater()
+    # request_delete() mirrors main_window.py: defers real deleteLater until
+    # in-flight workers drain, avoiding the Windows premature-exec race.
+    dialog.request_delete()
 
     # Drain pending async work (DeferredDelete, profile-worker success, etc.)
     # so destruction events, if any, surface before we exit.
