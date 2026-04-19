@@ -4,7 +4,7 @@ import importlib
 import logging
 
 from PyQt6 import sip
-from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -93,10 +93,6 @@ class AddAccountDialog(QDialog):
         # teardown corrupts the modal stack), the caller uses
         # request_delete() to flag us for deleteLater after _inflight drains.
         self._delete_after_finalise: bool = False
-        # Embedded browser is non-modal and signal-driven; we hold a ref so
-        # we can close it if the user cancels the add-account dialog before
-        # the browser emits auth_finished.
-        self._browser_dialog: QDialog | None = None
         self.setWindowTitle("Reconnect Account" if locked_login else "Add Account")
         self.setMinimumWidth(450)
         self._setup_ui()
@@ -179,9 +175,6 @@ class AddAccountDialog(QDialog):
     def done(self, result: int) -> None:
         if result != QDialog.DialogCode.Accepted:
             self._cancelled = True
-        # Close any still-showing embedded browser so it doesn't outlive us.
-        if self._browser_dialog is not None and not sip.isdeleted(self._browser_dialog):
-            self._browser_dialog.close()
         if self._inflight > 0:
             self._pending_done = result
             self.hide()
@@ -332,44 +325,28 @@ class AddAccountDialog(QDialog):
         # Pass code_verifier so the dialog performs the /token exchange from
         # inside Chromium — avoids AWS WAF TLS-fingerprint 403 that occurs
         # when requests (OpenSSL) sends the exchange with a different JA3 hash.
-        browser = ShieldBrowserDialog(
+        dialog = ShieldBrowserDialog(
             session.auth_url, login, session.code_verifier, parent=self
         )
-        # Signal-based, non-modal show() — exec() here would nest a modal
-        # event loop whose WebEngine teardown corrupts the parent's exec()
-        # on Windows (exec returns Rejected mid-flow, caller deleteLater's
-        # the parent, queued worker callbacks then crash on dead widgets).
-        browser.setWindowModality(Qt.WindowModality.ApplicationModal)
+        result = dialog.exec()
+        tokens = dialog.get_tokens()
+        token_error = dialog.get_token_error()
+        # Queue WebEngine teardown for after the modal loop fully unwinds.
+        # Destroying QWebEngineView mid-exit (what WA_DeleteOnClose was doing)
+        # corrupts Qt modality state on Windows → main window freezes.
+        dialog.deleteLater()
 
-        def on_auth_finished(tokens: object, err: object) -> None:
-            self._browser_dialog = None
-            browser.deleteLater()
-            if sip.isdeleted(self) or self._cancelled:
-                return
-            if tokens is None and err is None:
-                self._add_btn.setEnabled(True)
-                self._status_label.setText("Browser login cancelled")
-                return
-            if tokens is None:
-                self._add_btn.setEnabled(True)
-                self._status_label.setText(f"Error: {err}")
-                return
-            self._continue_after_browser(
-                dict(tokens), login, alias, proxy_url, portable
-            )
+        if result != QDialog.DialogCode.Accepted:
+            self._add_btn.setEnabled(True)
+            self._status_label.setText("Browser login cancelled")
+            return
 
-        browser.auth_finished.connect(on_auth_finished)
-        self._browser_dialog = browser
-        browser.show()
+        if not tokens:
+            self._add_btn.setEnabled(True)
+            err = token_error or "Token exchange failed"
+            self._status_label.setText(f"Error: {err}")
+            return
 
-    def _continue_after_browser(
-        self,
-        tokens: dict,
-        login: str,
-        alias: str | None,
-        proxy_url: str | None,
-        portable: bool,
-    ) -> None:
         self._status_label.setText("Completing browser login...")
 
         def task(_on_progress: object) -> dict:
