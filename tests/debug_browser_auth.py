@@ -432,6 +432,25 @@ def _run(args: argparse.Namespace) -> int:
         def get_proxy(self, _pid):
             return None
 
+    class _SingleProxyStore:
+        """Fake ProxyStore exposing exactly one proxy entry (CLI --proxy-url)."""
+
+        def __init__(self, proxy_url: str, name: str = "CLI proxy") -> None:
+            from ankama_launcher_emulator.utils.proxy_store import ProxyEntry
+
+            self._pid = "harness-proxy"
+            self._entry = ProxyEntry(name=name, url=proxy_url)
+
+        def list_proxies(self):
+            return {self._pid: self._entry}
+
+        def get_proxy(self, pid):
+            return self._entry if pid == self._pid else None
+
+        @property
+        def pid(self) -> str:
+            return self._pid
+
     # Production has MainWindow alive while AddAccountDialog is exec'd. Without
     # a persistent parent, Qt's quitOnLastWindowClosed (or just the WebEngine
     # teardown closing Chromium's internal windows) can pop the parent modal
@@ -449,7 +468,12 @@ def _run(args: argparse.Namespace) -> int:
     app.aboutToQuit.connect(lambda: dbg.info("[app] aboutToQuit fired"))
 
     dbg.banner(f"ADD-ACCOUNT BROWSER FLOW — {login}")
-    dialog = AddAccountDialog(_NullProxyStore(), parent=host)
+    if args.proxy_url:
+        proxy_store = _SingleProxyStore(args.proxy_url, name=args.proxy_name or "CLI proxy")
+        dbg.info(f"[setup] routing HAAPI via proxy: {args.proxy_url}")
+        dialog = AddAccountDialog(proxy_store, parent=host, initial_proxy_id=proxy_store.pid)
+    else:
+        dialog = AddAccountDialog(_NullProxyStore(), parent=host)
     tracer.watch(dialog, "AddAccountDialog(top)")
 
     # Pre-fill inputs and click Add
@@ -548,6 +572,14 @@ def main() -> int:
     parser.add_argument(
         "--offscreen", action="store_true",
         help="Use QT_QPA_PLATFORM=offscreen (no window, useful for CI)",
+    )
+    parser.add_argument(
+        "--proxy-url",
+        help="Route HAAPI calls through this proxy URL (e.g. socks5://user:pass@host:port)",
+    )
+    parser.add_argument(
+        "--proxy-name",
+        help="Display name for --proxy-url in the combo (default: 'CLI proxy')",
     )
     args = parser.parse_args()
 
