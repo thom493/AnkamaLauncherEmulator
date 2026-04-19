@@ -80,7 +80,16 @@ class EmbeddedAuthBrowserDialog(QDialog):
     When `code_verifier` is supplied the dialog performs the /token POST from
     inside Chromium (same WAF session / TLS fingerprint) and exposes the result
     via `get_tokens()`.  Callers should not call `session.exchange()` separately.
+
+    Use signal-based flow: set windowModality + show(); listen for
+    `auth_finished(tokens_or_None, error_or_None)`. Calling `exec()` on this
+    dialog is unsafe on Windows — its WebEngine teardown pops the parent's
+    outer modal exec() loop.
     """
+
+    # (tokens_dict_or_None, error_str_or_None)
+    # (dict, None) = success, (None, str) = failure, (None, None) = cancelled
+    auth_finished = pyqtSignal(object, object)
 
     def __init__(
         self,
@@ -90,9 +99,6 @@ class EmbeddedAuthBrowserDialog(QDialog):
         parent=None,
     ):
         super().__init__(parent)
-        # Caller schedules deleteLater() AFTER exec() returns — tearing down
-        # a QWebEngineView mid-exit (what WA_DeleteOnClose would do) corrupts
-        # Qt modality state on Windows and freezes the parent window.
         self.setWindowTitle("Authentication")
         self.setMinimumSize(800, 700)
         self._auth_code: str | None = None
@@ -100,6 +106,7 @@ class EmbeddedAuthBrowserDialog(QDialog):
         self._tokens: dict | None = None
         self._token_error: str | None = None
         self._cookies: dict[str, str] = {}
+        self._finished_emitted: bool = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -155,7 +162,7 @@ class EmbeddedAuthBrowserDialog(QDialog):
             QTimer.singleShot(0, lambda: self._exchange_in_browser(code))
         else:
             # Legacy path: caller does the exchange externally
-            QTimer.singleShot(0, self.accept)
+            QTimer.singleShot(0, self.close)
 
     def _exchange_in_browser(self, code: str) -> None:
         """Inject a JS fetch() POST to /token while still inside the browser session.
@@ -202,7 +209,17 @@ class EmbeddedAuthBrowserDialog(QDialog):
             self._token_error = f"HTTP {status}: {body[:300]}"
             logger.warning("[PKCE/browser] Token exchange failed %s: %s", status, body[:200])
 
-        QTimer.singleShot(0, self.accept)
+        # Emit before close() so the slot sees tokens/error set; close() then
+        # triggers done() which does the WebEngine teardown without a nested
+        # event loop (no exec() here — caller uses show()).
+        self._emit_finished()
+        QTimer.singleShot(0, self.close)
+
+    def _emit_finished(self) -> None:
+        if self._finished_emitted:
+            return
+        self._finished_emitted = True
+        self.auth_finished.emit(self._tokens, self._token_error)
 
     # ------------------------------------------------------------------
     # Public accessors
@@ -226,6 +243,10 @@ class EmbeddedAuthBrowserDialog(QDialog):
     # ------------------------------------------------------------------
 
     def done(self, result: int) -> None:
+        # Cancel path (X button / escape) reaches here without a prior
+        # _emit_finished — signal with (None, None) so the caller knows.
+        self._emit_finished()
+
         # Chromium requires: page destroyed before profile.
         # Strategy:
         #   1. Give browser a dummy page so it releases our custom page.

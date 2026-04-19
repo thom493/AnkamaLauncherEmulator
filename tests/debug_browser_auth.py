@@ -251,23 +251,33 @@ def _instrument_worker_signals() -> None:
 
 
 def _install_mock_browser(login: str, tokens: dict) -> None:
-    """Replace the embedded browser dialog with a synchronous stub.
+    """Replace the embedded browser dialog with a signal-based stub.
 
-    The stub mimics the surface used by `_start_browser_login`:
-    `dialog.exec()`, `dialog.get_tokens()`, `dialog.get_token_error()`,
-    `dialog.deleteLater()`. It also keeps a tiny QDialog around so the sip
-    lifetimes are realistic (deleteLater actually runs).
+    Matches the new contract: `auth_finished(tokens, error)` signal
+    dispatched shortly after show(). The stub is a real QDialog so sip
+    lifetimes remain realistic.
     """
+    from PyQt6.QtCore import QTimer, pyqtSignal
     from PyQt6.QtWidgets import QDialog
     from ankama_launcher_emulator.gui import add_account_dialog as mod
 
     class _MockBrowserDialog(QDialog):
+        auth_finished = pyqtSignal(object, object)
+
         def __init__(self, *_args, **_kwargs):
             super().__init__()
+            self._tokens = tokens
+            self._token_error = None
 
-        def exec(self) -> int:
-            dbg.info("[mock-browser] exec() — returning Accepted")
-            return QDialog.DialogCode.Accepted
+        def show(self) -> None:
+            dbg.info("[mock-browser] show() — scheduling auth_finished emit")
+            super().show()
+            QTimer.singleShot(10, self._emit_success)
+
+        def _emit_success(self) -> None:
+            dbg.info("[mock-browser] emitting auth_finished (tokens, None)")
+            self.auth_finished.emit(self._tokens, None)
+            self.close()
 
         def get_tokens(self) -> dict:
             return tokens
