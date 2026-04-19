@@ -89,10 +89,6 @@ class AddAccountDialog(QDialog):
         # running" if the dialog is deleted before a worker finishes.
         self._threads: list[QThread] = []
         self._workers: list[Worker] = []
-        # When the outer exec() pops prematurely on Windows (WebEngine
-        # teardown corrupts the modal stack), the caller uses
-        # request_delete() to flag us for deleteLater after _inflight drains.
-        self._delete_after_finalise: bool = False
         self.setWindowTitle("Reconnect Account" if locked_login else "Add Account")
         self.setMinimumWidth(450)
         self._setup_ui()
@@ -110,10 +106,10 @@ class AddAccountDialog(QDialog):
 
         def wrapped_success(result: object) -> None:
             try:
-                # sip.isdeleted guards against the Windows race where the
-                # outer exec() popped early, caller deleteLater'd us, and
-                # a nested ShieldCodeDialog.exec() just pumped the
-                # DeferredDelete event that destroyed our C++ widgets.
+                # Guard against the dialog being destroyed (X button, parent
+                # window close) while a worker is still in flight — a nested
+                # exec() can pump the DeferredDelete event that kills our C++
+                # widgets before this callback runs.
                 if sip.isdeleted(self) or self._cancelled:
                     return
                 on_success(result)
@@ -151,27 +147,6 @@ class AddAccountDialog(QDialog):
         self._threads.clear()
         self._workers.clear()
         super().done(result)
-        if self._delete_after_finalise:
-            self.deleteLater()
-
-    def request_delete(self) -> None:
-        """Caller-side teardown hook — safe replacement for deleteLater.
-
-        On Windows WebEngine can make the outer exec() return before done()
-        is invoked. If workers are still in flight we keep the dialog alive
-        (hidden) so the flow — Shield request, code dialog, validate,
-        persist — can still complete in the background. Only after workers
-        drain do we finalise and deleteLater. We deliberately do NOT set
-        _cancelled here: cancelling would skip on_login_success and no
-        account would be added despite a successful login.
-        """
-        if self._inflight > 0:
-            self._delete_after_finalise = True
-            if self._pending_done is None:
-                self._pending_done = QDialog.DialogCode.Rejected
-            self.hide()
-            return
-        self.deleteLater()
 
     def done(self, result: int) -> None:
         if result != QDialog.DialogCode.Accepted:

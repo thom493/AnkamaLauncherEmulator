@@ -469,31 +469,39 @@ def _run(args: argparse.Namespace) -> int:
 
     QTimer.singleShot(100, _kick)
 
-    rc = dialog.exec()
-    dbg.banner(f"DIALOG EXEC RETURNED {rc}")
-    status = dialog._status_label.text() if _is_alive(dialog._status_label) else "<dead>"
-    dbg.info(f"final dialog status: {status}")
-    # request_delete() mirrors main_window.py: defers real deleteLater until
-    # in-flight workers drain, avoiding the Windows premature-exec race.
-    dialog.request_delete()
+    # Mirror production main_window: non-blocking show()+finished signal.
+    # Avoids the outer-exec() premature-pop race on Windows WebEngine teardown.
+    done_flag = {"result": None}
 
-    # Drain pending async work (DeferredDelete, profile-worker success,
-    # Shield email + user input + validate HTTP). Loop until dialog is
-    # destroyed OR _inflight drains AND nothing left to do, else timeout.
-    # 120s is enough for: email delivery + user typing code + validate call.
+    def _on_finished(result: int) -> None:
+        done_flag["result"] = result
+        dbg.banner(f"DIALOG FINISHED {result}")
+
+    dialog.finished.connect(_on_finished)
+    dialog.show()
+
+    # Drive the main event loop until the dialog emits finished (full flow
+    # completed: login → Shield → validate → persist → accept), or timeout.
+    # 180s covers: WAF challenges + user browser login + email delivery +
+    # user typing code + validate call.
     import time
-    deadline = time.time() + 120.0
+    deadline = time.time() + 180.0
     while time.time() < deadline:
         app.processEvents()
-        if not _is_alive(dialog):
-            dbg.info("[drain] dialog destroyed — flow complete")
+        if done_flag["result"] is not None:
+            dbg.info("[drain] finished signal received — flow complete")
             break
-        if getattr(dialog, "_inflight", 0) == 0 and not dialog.isVisible():
-            dbg.info("[drain] inflight drained and dialog hidden — done")
+        if not _is_alive(dialog):
+            dbg.info("[drain] dialog destroyed before finished — abnormal exit")
             break
         time.sleep(0.05)
     else:
-        dbg.info("[drain] 120s deadline hit — forcing teardown")
+        dbg.info("[drain] 180s deadline hit — forcing teardown")
+    status = dialog._status_label.text() if _is_alive(dialog._status_label) else "<dead>"
+    dbg.info(f"final dialog status: {status}")
+    rc = done_flag["result"] if done_flag["result"] is not None else 0
+    if _is_alive(dialog):
+        dialog.deleteLater()
     host.close()
     return 0 if rc == QDialog.DialogCode.Accepted else 1
 
