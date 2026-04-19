@@ -47,6 +47,14 @@ import traceback
 import urllib3
 from pathlib import Path
 
+# Windows console defaults to cp1252 and chokes on ═ / ✓ / ✗ used by the
+# debug formatter. Force UTF-8 so the banners don't crash the harness.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -415,6 +423,7 @@ def _run(args: argparse.Namespace) -> int:
     _instrument_worker_signals()
 
     from ankama_launcher_emulator.gui.add_account_dialog import AddAccountDialog
+    from PyQt6.QtWidgets import QDialog, QMainWindow, QLabel
 
     class _NullProxyStore:
         def list_proxies(self):
@@ -423,8 +432,24 @@ def _run(args: argparse.Namespace) -> int:
         def get_proxy(self, _pid):
             return None
 
+    # Production has MainWindow alive while AddAccountDialog is exec'd. Without
+    # a persistent parent, Qt's quitOnLastWindowClosed (or just the WebEngine
+    # teardown closing Chromium's internal windows) can pop the parent modal
+    # loop early. Mirror production topology: a visible QMainWindow hosts the
+    # dialog as its child, stays alive through the whole run.
+    app.setQuitOnLastWindowClosed(False)
+    host = QMainWindow()
+    host.setWindowTitle("Debug Host — keep open while harness runs")
+    host.setCentralWidget(QLabel("Debug host window. Dialog opens as child."))
+    host.resize(420, 120)
+    host.show()
+
+    # Instrument app-level signals so we spot premature quit attempts.
+    app.lastWindowClosed.connect(lambda: dbg.info("[app] lastWindowClosed fired"))
+    app.aboutToQuit.connect(lambda: dbg.info("[app] aboutToQuit fired"))
+
     dbg.banner(f"ADD-ACCOUNT BROWSER FLOW — {login}")
-    dialog = AddAccountDialog(_NullProxyStore())
+    dialog = AddAccountDialog(_NullProxyStore(), parent=host)
     tracer.watch(dialog, "AddAccountDialog(top)")
 
     # Pre-fill inputs and click Add
@@ -444,13 +469,20 @@ def _run(args: argparse.Namespace) -> int:
 
     QTimer.singleShot(100, _kick)
 
-    from PyQt6.QtWidgets import QDialog
     rc = dialog.exec()
     dbg.banner(f"DIALOG EXEC RETURNED {rc}")
     status = dialog._status_label.text() if _is_alive(dialog._status_label) else "<dead>"
     dbg.info(f"final dialog status: {status}")
     dialog.deleteLater()
-    app.processEvents()
+
+    # Drain pending async work (DeferredDelete, profile-worker success, etc.)
+    # so destruction events, if any, surface before we exit.
+    import time
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.05)
+    host.close()
     return 0 if rc == QDialog.DialogCode.Accepted else 1
 
 
