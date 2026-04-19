@@ -12,7 +12,7 @@ import json
 import logging
 from urllib.parse import quote, unquote
 
-from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QTimer, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
 from qfluentwidgets import BodyLabel
 
@@ -90,10 +90,9 @@ class EmbeddedAuthBrowserDialog(QDialog):
         parent=None,
     ):
         super().__init__(parent)
-        # Self-destruct on close so the QWebEngineView + renderer process don't
-        # linger as MainWindow children — on Windows the leak freezes the
-        # parent window's event delivery after a single add-account cycle.
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        # Caller schedules deleteLater() AFTER exec() returns — tearing down
+        # a QWebEngineView mid-exit (what WA_DeleteOnClose would do) corrupts
+        # Qt modality state on Windows and freezes the parent window.
         self.setWindowTitle("Authentication")
         self.setMinimumSize(800, 700)
         self._auth_code: str | None = None

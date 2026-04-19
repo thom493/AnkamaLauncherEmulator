@@ -3,7 +3,7 @@
 import importlib
 import logging
 
-from PyQt6.QtCore import Qt, QThread
+from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -74,23 +74,18 @@ class AddAccountDialog(QDialog):
         initial_alias: str | None = None,
     ):
         super().__init__(parent)
-        # Self-destruct on close so QWebEngine grandchildren (from the
-        # embedded auth dialog) don't linger as MainWindow descendants —
-        # otherwise the main window freezes after a Shield-path add-account.
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._proxy_store = proxy_store
         self._locked_login = locked_login
         self._initial_proxy_id = initial_proxy_id
         self._initial_alias = initial_alias
         # Defer actual close until in-flight background workers finish, so
-        # destroying the dialog (and its QThread children) can't race with
-        # a still-running worker.
+        # the dialog can't be torn down while a callback is mid-execution.
         self._inflight: int = 0
         self._pending_done: int | None = None
         self._cancelled: bool = False
-        # Threads are unparented so dialog deletion (WA_DeleteOnClose) cannot
-        # destroy a still-running QThread. We keep our own refs here and
-        # quit+wait on each before finalising done().
+        # Threads unparented — we own them explicitly and quit+wait on each
+        # before finalising done(). Avoids "QThread: Destroyed while still
+        # running" if the dialog is deleted before a worker finishes.
         self._threads: list[QThread] = []
         self._workers: list[Worker] = []
         self.setWindowTitle("Reconnect Account" if locked_login else "Add Account")
@@ -134,11 +129,9 @@ class AddAccountDialog(QDialog):
             self._finalise_done(result)
 
     def _finalise_done(self, result: int) -> None:
-        # Block until every worker thread has fully exited before letting
-        # WA_DeleteOnClose tear down the dialog. Without this the QThreads
-        # (no longer parented to dialog, but Qt would still observe them via
-        # cleanup) print "QThread: Destroyed while thread is still running"
-        # and abort.
+        # Block until every worker thread has fully exited before closing
+        # the dialog. Otherwise Qt prints "QThread: Destroyed while thread
+        # is still running" and aborts.
         for thread in self._threads:
             thread.quit()
             thread.wait(2000)
@@ -154,6 +147,19 @@ class AddAccountDialog(QDialog):
             self.hide()
             return
         self._finalise_done(result)
+
+    def closeEvent(self, event) -> None:
+        # Symmetric with done(): X button bypasses done(), so without this
+        # the C++ dialog would die while a worker is still in flight and
+        # its callback would crash on dead child widgets (SwitchButton /
+        # Indicator) or dead self.
+        if self._inflight > 0:
+            event.ignore()
+            self._cancelled = True
+            self._pending_done = QDialog.DialogCode.Rejected
+            self.hide()
+            return
+        super().closeEvent(event)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -236,6 +242,10 @@ class AddAccountDialog(QDialog):
                 proxy_url = entry.url
 
         alias = self._alias_input.text().strip() or None
+        # Snapshot the switch now — the dialog may go through nested modal
+        # exec()s (embedded auth, Shield) before the worker callback runs,
+        # and widget C++ lifetimes across those aren't something we control.
+        portable = self._portable_switch.isChecked()
 
         self._add_btn.setDisabled(True)
         self._status_label.setText("Logging in...")
@@ -247,11 +257,11 @@ class AddAccountDialog(QDialog):
 
         def on_success(result: object) -> None:
             data = dict(result)  # type: ignore[arg-type]
-            self._on_login_success(data, login, alias, proxy_url)
+            self._on_login_success(data, login, alias, proxy_url, portable)
 
         def on_error(err: object) -> None:
             if _should_use_browser_login(err):
-                self._start_browser_login(login, alias, proxy_url)
+                self._start_browser_login(login, alias, proxy_url, portable)
                 return
             self._add_btn.setEnabled(True)
             if "incorrect login or password" in str(err).lower():
@@ -266,6 +276,7 @@ class AddAccountDialog(QDialog):
         login: str,
         alias: str | None,
         proxy_url: str | None,
+        portable: bool,
     ) -> None:
         self._status_label.setText("Headless login blocked, opening browser...")
         try:
@@ -284,15 +295,22 @@ class AddAccountDialog(QDialog):
         dialog = ShieldBrowserDialog(
             session.auth_url, login, session.code_verifier, parent=self
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        result = dialog.exec()
+        tokens = dialog.get_tokens()
+        token_error = dialog.get_token_error()
+        # Queue WebEngine teardown for after the modal loop fully unwinds.
+        # Destroying QWebEngineView mid-exit (what WA_DeleteOnClose was doing)
+        # corrupts Qt modality state on Windows → main window freezes.
+        dialog.deleteLater()
+
+        if result != QDialog.DialogCode.Accepted:
             self._add_btn.setEnabled(True)
             self._status_label.setText("Browser login cancelled")
             return
 
-        tokens = dialog.get_tokens()
         if not tokens:
             self._add_btn.setEnabled(True)
-            err = dialog.get_token_error() or "Token exchange failed"
+            err = token_error or "Token exchange failed"
             self._status_label.setText(f"Error: {err}")
             return
 
@@ -314,7 +332,7 @@ class AddAccountDialog(QDialog):
 
         def on_success(result: object) -> None:
             data = dict(result)  # type: ignore[arg-type]
-            self._on_login_success(data, login, alias, proxy_url)
+            self._on_login_success(data, login, alias, proxy_url, portable)
 
         def on_error(err: object) -> None:
             self._add_btn.setEnabled(True)
@@ -331,6 +349,7 @@ class AddAccountDialog(QDialog):
         login: str,
         alias: str | None,
         proxy_url: str | None,
+        portable: bool,
     ) -> None:
         if self._locked_login:
             server_login = str(data.get("login") or "")
@@ -349,7 +368,7 @@ class AddAccountDialog(QDialog):
         # also crashes on macOS dev (no /proc/cpuinfo).
         meta = AccountMeta()
         meta.set_meta(login, source="managed", alias=alias)
-        meta.set_portable_mode(login, self._portable_switch.isChecked())
+        meta.set_portable_mode(login, portable)
         if proxy_url is not None:
             meta.set_proxy(login, proxy_url)
 

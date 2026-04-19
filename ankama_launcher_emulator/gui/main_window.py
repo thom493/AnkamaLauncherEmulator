@@ -541,6 +541,7 @@ class MainWindow(QMainWindow):
             initial_alias=initial_alias,
         )
         accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        dialog.deleteLater()
         card.refresh_launch_button()
         if accepted:
             self._schedule_refresh()
@@ -785,7 +786,9 @@ class MainWindow(QMainWindow):
         from ankama_launcher_emulator.gui.add_account_dialog import AddAccountDialog
 
         dialog = AddAccountDialog(self._proxy_store, parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        dialog.deleteLater()
+        if accepted:
             self._schedule_refresh()
 
     # --- Info bars ---

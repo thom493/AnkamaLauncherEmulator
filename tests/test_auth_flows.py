@@ -65,7 +65,7 @@ class AuthFlowTests(unittest.TestCase):
                 dialog._on_add()
 
         start_browser_login.assert_called_once_with(
-            "demo@example.com", None, None
+            "demo@example.com", None, None, True
         )
 
     @patch("ankama_launcher_emulator.gui.add_account_dialog._load_embedded_auth_dialog_class")
