@@ -65,6 +65,7 @@ Install uv:
 
 ```bash
 pip install uv
+```
 
 ---
 
