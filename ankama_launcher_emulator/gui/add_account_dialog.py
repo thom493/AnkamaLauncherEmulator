@@ -37,6 +37,7 @@ from ankama_launcher_emulator.haapi.shield import (
     store_shield_certificate,
     validate_security_code,
 )
+from ankama_launcher_emulator.utils.proxy import to_http_proxy
 from ankama_launcher_emulator.utils.proxy_store import ProxyStore
 
 logger = logging.getLogger()
@@ -301,12 +302,16 @@ class AddAccountDialog(QDialog):
         # Pass code_verifier so the dialog performs the /token exchange from
         # inside Chromium — avoids AWS WAF TLS-fingerprint 403 that occurs
         # when requests (OpenSSL) sends the exchange with a different JA3 hash.
+        # Browser uses HTTP scheme for the same proxy (Chromium can't auth
+        # SOCKS5). Same provider exit IP, so login_ip stays consistent with
+        # the SOCKS5-routed Python HAAPI session.
+        browser_proxy_url = to_http_proxy(proxy_url) if proxy_url else None
         dialog = ShieldBrowserDialog(
             session.auth_url,
             login,
             session.code_verifier,
             parent=self,
-            proxy_url=proxy_url,
+            proxy_url=browser_proxy_url,
         )
         result = dialog.exec()
         tokens = dialog.get_tokens()

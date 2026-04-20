@@ -15,6 +15,20 @@ def to_socks5h(proxy_url: str) -> str:
     return proxy_url
 
 
+def to_http_proxy(proxy_url: str) -> str:
+    """Convert socks5:// to http:// (same host:port and creds).
+
+    Chromium does not support SOCKS5 username/password auth, but does
+    support HTTP proxy basic auth via QWebEnginePage.proxyAuthenticationRequired.
+    Most residential proxy providers expose both schemes on the same port.
+    """
+    if proxy_url.startswith("socks5h://"):
+        return "http://" + proxy_url[len("socks5h://") :]
+    if proxy_url.startswith("socks5://"):
+        return "http://" + proxy_url[len("socks5://") :]
+    return proxy_url
+
+
 def validation_proxy_url(proxy_url: str | None) -> bool:
     if not proxy_url:
         return True

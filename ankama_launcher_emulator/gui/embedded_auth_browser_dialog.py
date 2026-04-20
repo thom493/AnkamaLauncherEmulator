@@ -102,15 +102,21 @@ class EmbeddedAuthBrowserDialog(QDialog):
         self._token_error: str | None = None
         self._cookies: dict[str, str] = {}
 
-        # Route Chromium through the same SOCKS5 exit as the Python HAAPI
+        # Route Chromium through the same proxy exit as the Python HAAPI
         # session. Otherwise /Account/Account records the host's real IP as
         # login_ip and the subsequent /Shield/SecurityCode call from the
         # proxied requests session is rejected ("Unauthorized service
-        # '\Ankama\Shield'") because the IPs don't match. QtWebEngine has no
-        # per-profile proxy API for SOCKS5 — application proxy is the only
-        # supported channel — so we save the prior proxy and restore it in
-        # done() to avoid bleeding into the rest of the app.
-        self._previous_proxy = self._apply_socks5_proxy(proxy_url)
+        # '\Ankama\Shield'") because the IPs don't match.
+        #
+        # Caller passes an http://user:pass@host:port URL (most providers
+        # serve HTTP and SOCKS5 on the same exit). HTTP is required because
+        # Chromium does not support SOCKS5 username/password auth — the URL
+        # creds are stripped before being passed to the network stack. HTTP
+        # auth, in contrast, is delegated back to Qt via the
+        # proxyAuthenticationRequired signal which we handle below.
+        self._proxy_user = ""
+        self._proxy_password = ""
+        self._previous_proxy = self._apply_http_proxy(proxy_url)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -132,37 +138,53 @@ class EmbeddedAuthBrowserDialog(QDialog):
         self._page = embedded_auth_page_class(self._profile, self)
         self._page.code_received.connect(self._on_code)
         self._page.token_exchange_done.connect(self._on_token_exchange_done)
+        if self._proxy_user:
+            self._page.proxyAuthenticationRequired.connect(self._on_proxy_auth)
 
         self._browser = QWebEngineView(self)
         self._browser.setPage(self._page)
         layout.addWidget(self._browser, 1)
         self._browser.setUrl(QUrl(auth_url))
 
-    @staticmethod
-    def _apply_socks5_proxy(proxy_url: str | None):
+    def _apply_http_proxy(self, proxy_url: str | None):
         if not proxy_url:
             return None
         parsed = urlparse(proxy_url)
-        if parsed.scheme not in ("socks5", "socks5h") or not parsed.hostname:
-            logger.warning("[PKCE/browser] unsupported proxy scheme: %s", parsed.scheme)
+        if parsed.scheme != "http" or not parsed.hostname:
+            logger.warning(
+                "[PKCE/browser] unsupported proxy scheme for browser: %s "
+                "(expected http://)", parsed.scheme,
+            )
             return None
         from PyQt6.QtNetwork import QNetworkProxy
 
+        self._proxy_user = parsed.username or ""
+        self._proxy_password = parsed.password or ""
+
         previous = QNetworkProxy.applicationProxy()
+        # Chromium strips creds from the URL it receives via --proxy-server,
+        # so we still set them on the QNetworkProxy for completeness but
+        # the actual auth is delivered via proxyAuthenticationRequired.
         proxy = QNetworkProxy(
-            QNetworkProxy.ProxyType.Socks5Proxy,
+            QNetworkProxy.ProxyType.HttpProxy,
             parsed.hostname,
-            parsed.port or 1080,
-            parsed.username or "",
-            parsed.password or "",
+            parsed.port or 8080,
+            self._proxy_user,
+            self._proxy_password,
         )
         QNetworkProxy.setApplicationProxy(proxy)
         logger.info(
-            "[PKCE/browser] Chromium routed via SOCKS5 %s:%s",
+            "[PKCE/browser] Chromium routed via HTTP proxy %s:%s",
             parsed.hostname,
             parsed.port,
         )
         return previous
+
+    def _on_proxy_auth(self, _request_url, authenticator, _proxy_host) -> None:
+        # Fires on Chromium's first 407 from the proxy. Without this, the
+        # CONNECT retries indefinitely and the page never loads.
+        authenticator.setUser(self._proxy_user)
+        authenticator.setPassword(self._proxy_password)
 
     # ------------------------------------------------------------------
     # Cookie capture
