@@ -2,6 +2,7 @@
 
 import importlib
 import logging
+import traceback
 
 from PyQt6 import sip
 from PyQt6.QtCore import QThread
@@ -270,6 +271,11 @@ class AddAccountDialog(QDialog):
             self._on_login_success(data, login, alias, proxy_url, portable)
 
         def on_error(err: object) -> None:
+            tb = "".join(traceback.format_exception(type(err), err, getattr(err, "__traceback__", None))) if isinstance(err, BaseException) else ""
+            logger.error(
+                "[ADD_ACCOUNT] programmatic_pkce_login failed type=%s msg=%r fallback=%s\n%s",
+                type(err).__name__, str(err), _should_use_browser_login(err), tb,
+            )
             if _should_use_browser_login(err):
                 self._start_browser_login(login, alias, proxy_url, portable)
                 return

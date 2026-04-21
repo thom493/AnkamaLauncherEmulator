@@ -283,31 +283,49 @@ def programmatic_pkce_login(
     resp = session.get(
         auth_url, headers=_FORM_HEADERS, allow_redirects=True, verify=False
     )
+    logger.info(
+        "[PKCE-PROG] step1 GET /login/ankama status=%s len=%d final_url=%s history=%s",
+        resp.status_code, len(resp.text or ""), resp.url,
+        [r.status_code for r in resp.history],
+    )
     location = resp.headers.get("location")
 
     # If we got a redirect, follow it
     if location:
+        logger.info("[PKCE-PROG] step1 manual redirect location=%s", location)
         resp = session.get(
             f"{AUTH_BASE}{location}" if location.startswith("/") else location,
             headers=_FORM_HEADERS,
             allow_redirects=True,
             verify=False,
         )
+        logger.info(
+            "[PKCE-PROG] step1b follow-redirect status=%s len=%d final_url=%s",
+            resp.status_code, len(resp.text or ""), resp.url,
+        )
 
     # Step 2: Extract CSRF state from HTML form
     html = resp.text
     state_match = re.search(r'name="state"\s+value="([^"]+)"', html)
     if not state_match:
+        logger.error(
+            "[PKCE-PROG] CSRF state missing — status=%s url=%s html_head=%r",
+            resp.status_code, resp.url, (html[:500] if html else ""),
+        )
         raise RuntimeError("Failed to extract CSRF state from login page")
     state = state_match.group(1)
-    logger.info("[PKCE-PROG] Got CSRF state")
+    logger.info("[PKCE-PROG] step2 CSRF state extracted (len=%d)", len(state))
 
     # Step 2b: Obtain AWS WAF token (same flow as Bubble.D3 AwsBypassService)
     progress("Solving AWS WAF challenge...")
     from ankama_launcher_emulator.haapi.aws_waf_bypass import get_aws_waf_token
+    logger.info("[PKCE-PROG] step2b calling get_aws_waf_token")
     waf_token = get_aws_waf_token(state)
     session.cookies.set("aws-waf-token", waf_token, domain="auth.ankama.com", path="/")
-    logger.info("[PKCE-PROG] WAF token injected")
+    logger.info(
+        "[PKCE-PROG] step2b WAF token injected (len=%d, head=%r)",
+        len(waf_token or ""), (waf_token or "")[:16],
+    )
 
     # Step 3: POST credentials
     progress("Submitting credentials...")
@@ -318,18 +336,31 @@ def programmatic_pkce_login(
         allow_redirects=False,
         verify=False,
     )
+    logger.info(
+        "[PKCE-PROG] step3 POST /login/ankama/form status=%s has_location=%s",
+        resp.status_code, bool(resp.headers.get("location")),
+    )
 
     location = resp.headers.get("location")
     if not location:
+        logger.error(
+            "[PKCE-PROG] no redirect — status=%s body_head=%r",
+            resp.status_code, (resp.text or "")[:300],
+        )
         raise RuntimeError("Incorrect login or password")
 
     # Step 4: Follow redirect to get auth code
     # The redirect may contain the code directly or need one more hop
+    logger.info("[PKCE-PROG] step4 following redirect to=%s", location[:120])
     resp = session.get(
         f"{AUTH_BASE}{location}" if location.startswith("/") else location,
         headers=_FORM_HEADERS,
         allow_redirects=False,
         verify=False,
+    )
+    logger.info(
+        "[PKCE-PROG] step4 status=%s has_location=%s body_len=%d",
+        resp.status_code, bool(resp.headers.get("location")), len(resp.text or ""),
     )
 
     # Extract code from response body or location header
@@ -348,9 +379,13 @@ def programmatic_pkce_login(
             code = code_match.group(1)
 
     if not code:
+        logger.error(
+            "[PKCE-PROG] no auth code — body_head=%r loc2=%r",
+            body_text[:300], loc2[:300],
+        )
         raise RuntimeError("Failed to extract authorization code from redirect")
 
-    logger.info("[PKCE-PROG] Got auth code")
+    logger.info("[PKCE-PROG] step4 got auth code (len=%d)", len(code))
 
     # Step 5: Exchange code for tokens — direct (no proxy), WAF token in cookie
     progress("Exchanging tokens...")

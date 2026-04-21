@@ -447,6 +447,9 @@ async def _solve_once(
 async def _get_token_async(state: str, proxy_url: str | None) -> str:
     """Two-round solver. Round 1 gets a token; round 2 refines it (better
     trust score)."""
+    logger.info(
+        "[WAF] solver start proxy=%s state_len=%d", bool(proxy_url), len(state or ""),
+    )
     client = _make_client(proxy_url)
     headers = _api_headers()
     location = (
@@ -481,7 +484,11 @@ async def _get_token_async(state: str, proxy_url: str | None) -> str:
             return token
         except Exception as exc:
             last_error = exc
-            logger.warning("[WAF] attempt %d failed: %s", attempt + 1, exc)
+            logger.warning(
+                "[WAF] attempt %d failed type=%s: %s",
+                attempt + 1, type(exc).__name__, exc,
+                exc_info=True,
+            )
 
     raise RuntimeError(f"AWS WAF bypass failed after 5 attempts: {last_error}")
 
