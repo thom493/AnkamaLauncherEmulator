@@ -128,7 +128,7 @@ _BRANDS = {
 }
 
 _USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
 )
 
@@ -150,7 +150,7 @@ def _api_headers() -> dict:
         "referer": f"{_SITE}/",
         "sec-ch-ua": _sec_ch_ua(),
         "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Linux"',
+        "sec-ch-ua-platform": '"Windows"',
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "cross-site",
@@ -452,16 +452,6 @@ async def _get_token_async(state: str, proxy_url: str | None) -> str:
     )
     client = _make_client(proxy_url)
     headers = _api_headers()
-
-    # Diagnostic: verify rnet client actually routes through the proxy.
-    # If this IP differs from the one requests sees, AWS WAF will bind
-    # the token to a different IP than the one doing the GET → 403.
-    try:
-        ip_resp = await client.get("https://api.ipify.org")
-        ip_txt = (await ip_resp.text()).strip()
-        logger.info("[WAF] rnet exit IP = %s", ip_txt)
-    except Exception as exc:
-        logger.warning("[WAF] rnet IP probe failed: %s", exc)
     location = (
         f"https://auth.ankama.com/login/ankama/form"
         f"?origin_tracker=https://www.ankama-launcher.com/launcher"
