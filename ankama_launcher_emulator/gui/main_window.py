@@ -3,10 +3,12 @@ import importlib
 from typing import Callable, cast
 
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QScrollArea,
@@ -121,6 +123,9 @@ class MainWindow(QMainWindow):
             f"CardWidget#warningCard {{ background-color: {PANEL_ALT_HEXA}; border: 1px solid {BORDER_HEXA}; border-radius: 18px; }}"
             f"CardWidget#emptyStateCard {{ background-color: {PANEL_BG_HEXA}; border: 1px solid {BORDER_HEXA}; border-radius: 20px; }}"
             f"CardWidget#emptyStateCard BodyLabel {{ color: {TEXT_MUTED_HEXA}; }}"
+            "PushButton, PrimaryPushButton {"
+            "border-radius: 9999px;"
+            "}"
         )
 
         central = QWidget()
@@ -159,51 +164,47 @@ class MainWindow(QMainWindow):
         layout.setSpacing(14)
         root_layout.addWidget(content_shell, 1)
 
+        header_row = QHBoxLayout()
+        header_row.setSpacing(14)
+
         self._top_bar = QWidget()
         self._top_bar.setObjectName("topBar")
-        top_bar_layout = QHBoxLayout(self._top_bar)
+        self._top_bar.setMinimumWidth(420)
+        top_bar_layout = QVBoxLayout(self._top_bar)
         top_bar_layout.setContentsMargins(20, 18, 20, 18)
-        top_bar_layout.setSpacing(16)
+        top_bar_layout.setSpacing(12)
+
+        selected_game_row = QHBoxLayout()
+        selected_game_row.setSpacing(16)
+
+        self._selected_game_logo = QLabel()
+        self._selected_game_logo.setFixedSize(112, 86)
+        selected_game_row.addWidget(
+            self._selected_game_logo, alignment=Qt.AlignmentFlag.AlignCenter
+        )
 
         title_stack = QVBoxLayout()
         title_stack.setSpacing(2)
+        title_stack.addStretch()
 
         top_label = CaptionLabel("Selected Game")
         self._title_label = TitleLabel(
             DOFUS_3_TITLE if self._current_game_is_dofus3 else DOFUS_RETRO_TITLE
         )
         self._title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self._subtitle_label = BodyLabel("Launch accounts, proxies, and network routes.")
-        self._subtitle_label.setStyleSheet(f"color: {TEXT_MUTED_HEXA};")
 
         title_stack.addWidget(top_label)
         title_stack.addWidget(self._title_label)
-        title_stack.addWidget(self._subtitle_label)
-        top_bar_layout.addLayout(title_stack, 1)
+        title_stack.addStretch()
+        selected_game_row.addLayout(title_stack, 1)
+        top_bar_layout.addLayout(selected_game_row)
 
-        action_row = QHBoxLayout()
-        action_row.setSpacing(10)
+        self._banner = DownloadBanner(self._top_bar)
+        top_bar_layout.addWidget(self._banner)
 
-        gear_btn = PushButton("Proxies")
-        gear_btn.setFixedWidth(100)
-        gear_btn.clicked.connect(self._open_proxy_dialog)
-        action_row.addWidget(gear_btn)
-
-        add_btn = PushButton("Add Account")
-        add_btn.setFixedWidth(124)
-        add_btn.setStyleSheet(
-            "PushButton {"
-            f"background-color: {ORANGE_HEXA};"
-            "color: white;"
-            "border-radius: 10px;"
-            "padding: 8px 14px;"
-            "}"
-        )
-        add_btn.clicked.connect(self._open_add_account_dialog)
-        action_row.addWidget(add_btn)
-        top_bar_layout.addLayout(action_row)
-
-        layout.addWidget(self._top_bar)
+        header_row.addWidget(self._top_bar, 1)
+        header_row.addStretch(1)
+        layout.addLayout(header_row)
 
         if not has_shown_star_repo():
             layout.addWidget(StarBar())
@@ -224,12 +225,34 @@ class MainWindow(QMainWindow):
         else:
             self._warning_card = None
 
-        self._banner = DownloadBanner()
-        layout.addWidget(self._banner)
+        action_row = QHBoxLayout()
+        action_row.setSpacing(10)
+        action_row.addStretch()
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        gear_btn = PushButton("Proxies")
+        gear_btn.setFixedWidth(100)
+        gear_btn.clicked.connect(self._open_proxy_dialog)
+        action_row.addWidget(gear_btn)
+
+        add_btn = PushButton("Add Account")
+        add_btn.setFixedWidth(124)
+        add_btn.setStyleSheet(
+            "PushButton {"
+            f"background-color: {ORANGE_HEXA};"
+            "color: white;"
+            "padding: 8px 14px;"
+            "}"
+        )
+        add_btn.clicked.connect(self._open_add_account_dialog)
+        action_row.addWidget(add_btn)
+        layout.addLayout(action_row)
+
+        self._accounts_scroll = QScrollArea()
+        self._accounts_scroll.setWidgetResizable(True)
+        self._accounts_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._accounts_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
 
         self._card_container = QWidget()
         self._card_layout = QVBoxLayout(self._card_container)
@@ -257,19 +280,24 @@ class MainWindow(QMainWindow):
             self._add_card(account, all_interface)
 
         self._card_layout.addStretch()
-        scroll.setWidget(self._card_container)
-        layout.addWidget(scroll, 1)
+        self._accounts_scroll.setWidget(self._card_container)
+        layout.addWidget(self._accounts_scroll, 1)
 
         self._select_game(self._current_game_is_dofus3)
         self._sync_empty_state()
 
     def _select_game(self, is_dofus_3: bool) -> None:
         self._current_game_is_dofus3 = is_dofus_3
-        self._title_label.setText(DOFUS_3_TITLE if is_dofus_3 else DOFUS_RETRO_TITLE)
-        self._subtitle_label.setText(
-            "Launch accounts, proxies, and network routes."
-            if is_dofus_3
-            else "Launch Retro accounts with the same per-account controls."
+        title = DOFUS_3_TITLE if is_dofus_3 else DOFUS_RETRO_TITLE
+        logo_path = RESOURCES / ("Dofus3.png" if is_dofus_3 else "DofusRetro.png")
+        self._title_label.setText(title)
+        self._selected_game_logo.setPixmap(
+            QPixmap(str(logo_path)).scaled(
+                112,
+                86,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         )
         self._dofus_selector.set_active(is_dofus_3)
         self._retro_selector.set_active(not is_dofus_3)

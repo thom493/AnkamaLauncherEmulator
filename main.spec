@@ -19,6 +19,7 @@ a = Analysis(
         ('resources/Dofus3.png', 'resources'),
         ('resources/DofusRetro.png', 'resources'),
         ('resources/app.ico', 'resources'),
+        ('resources/load.gif', 'resources'),
     ] + _rnet_datas,
     hiddenimports=[
         'ankama_launcher_emulator.gui.embedded_auth_browser_dialog',

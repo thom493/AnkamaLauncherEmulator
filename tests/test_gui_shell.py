@@ -1,13 +1,19 @@
 import os
 import unittest
 from pathlib import Path
+from typing import cast
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PyQt6.QtCore import Qt
 
 from ankama_launcher_emulator.gui.account_card import AccountCard
 from ankama_launcher_emulator.gui.download_banner import DownloadBanner
 from ankama_launcher_emulator.gui.main_window import MainWindow
 from ankama_launcher_emulator.gui.app import APP_ICON_PATH, ensure_app, set_app_icon
+from ankama_launcher_emulator.server.server import AnkamaLauncherServer
+from ankama_launcher_emulator.utils.proxy_store import ProxyStore
 
 
 class _DummyServer:
@@ -47,24 +53,34 @@ class GuiShellTests(unittest.TestCase):
         self.assertFalse(self.app.windowIcon().isNull())
 
     def test_main_window_builds_dashboard_shell(self):
-        window = MainWindow(
-            _DummyServer(),
-            [{"apikey": {"login": "demo@example.com"}}],
-            {"10.0.0.2": ("Fiber", "203.0.113.10")},
-        )
+        with patch(
+            "ankama_launcher_emulator.gui.account_card.has_active_credentials",
+            return_value=True,
+        ):
+            window = MainWindow(
+                cast(AnkamaLauncherServer, _DummyServer()),
+                [{"apikey": {"login": "demo@example.com"}}],
+                {"10.0.0.2": ("Fiber", "203.0.113.10")},
+            )
         window.show()
         self.app.processEvents()
         self.assertEqual(window.windowTitle(), "AnkAlt Launcher")
         self.assertTrue(window._sidebar.isVisible())
         self.assertTrue(window._top_bar.isVisible())
         self.assertTrue(hasattr(window, "_banner"))
+        self.assertIs(window._banner.parent(), window._top_bar)
+        self.assertFalse(window._selected_game_logo.pixmap().isNull())
+        self.assertEqual(
+            window._accounts_scroll.verticalScrollBarPolicy(),
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded,
+        )
         self.assertEqual(window._title_label.text(), "Dofus 3")
         self.assertEqual(window._dofus_selector.property("navRole"), "game")
         self.assertEqual(window._retro_selector.property("navRole"), "game")
         self.assertEqual(window._cards[0].login, "demo@example.com")
 
     def test_main_window_empty_state_panel_visible_without_accounts(self):
-        window = MainWindow(_DummyServer(), [], {})
+        window = MainWindow(cast(AnkamaLauncherServer, _DummyServer()), [], {})
         window.show()
         self.app.processEvents()
         self.assertEqual(window._empty_state_card.objectName(), "emptyStateCard")
@@ -76,17 +92,23 @@ class GuiShellTests(unittest.TestCase):
         banner.set_status("Downloading update... 2 / 5")
         self.assertEqual(banner.objectName(), "statusStrip")
         self.assertTrue(banner.isVisible())
+        self.assertIsNotNone(banner._loading_label.movie())
+        self.assertTrue(banner._loading_movie.isValid())
         self.assertEqual(banner._progress_bar.maximum(), 5)
         self.assertEqual(banner._progress_bar.value(), 2)
         banner.set_status("")
         self.assertFalse(banner.isVisible())
 
     def test_account_card_keeps_all_main_controls_visible(self):
-        card = AccountCard(
-            "demo@example.com",
-            {"10.0.0.2": ("Fiber", "203.0.113.10")},
-            proxy_store=_StubProxyStore(),
-        )
+        with patch(
+            "ankama_launcher_emulator.gui.account_card.has_active_credentials",
+            return_value=True,
+        ):
+            card = AccountCard(
+                "demo@example.com",
+                {"10.0.0.2": ("Fiber", "203.0.113.10")},
+                proxy_store=cast(ProxyStore, _StubProxyStore()),
+            )
         self.assertEqual(card._login_label.text(), "demo@example.com")
         self.assertEqual(card._launch_btn.text(), "Launch")
         self.assertEqual(card._test_proxy_btn.text(), "Test")
@@ -98,6 +120,7 @@ class GuiShellTests(unittest.TestCase):
         spec_text = Path("main.spec").read_text(encoding="utf-8")
         self.assertIn("icon='resources/app.ico'", spec_text)
         self.assertIn("name='AnkAlt Launcher'", spec_text)
+        self.assertIn("('resources/load.gif', 'resources')", spec_text)
 
     def test_windows_workflow_uses_ankalt_launcher_binary(self):
         workflow_text = Path(".github/workflows/build-windows.yml").read_text(
