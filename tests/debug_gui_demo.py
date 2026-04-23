@@ -54,7 +54,7 @@ APP_BG = "#111111"
 PANEL_BG = "#191919"
 PANEL_ALT = "#202020"
 BORDER = "#2b2b2b"
-TEXT = "#f3f3f3"
+TEXT = "#ffffff"
 TEXT_MUTED = "#737373"
 ORANGE = "#d25f04"
 

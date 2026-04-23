@@ -2,7 +2,7 @@ import re
 
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QMovie
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget, QFrame
 from qfluentwidgets import CaptionLabel, ProgressBar
 
 from ankama_launcher_emulator.consts import RESOURCES
@@ -10,6 +10,7 @@ from ankama_launcher_emulator.gui.consts import (
     BORDER_HEXA,
     ORANGE_HEXA,
     PANEL_ALT_HEXA,
+    TEXT_MUTED_HEXA,
 )
 
 _STEP_RE = re.compile(r"\(?\s*(\d+)\s*/\s*(\d+)\s*\)?")
@@ -25,34 +26,49 @@ class DownloadBanner(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("statusStrip")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(6)
+        
+        # Main horizontal layout
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(12, 8, 12, 8)
+        main_layout.setSpacing(6)
 
-        progress_row = QHBoxLayout()
-        progress_row.setSpacing(10)
-
+        # 1. QMovie Label
         self._loading_label = QLabel()
-        self._loading_label.setFixedSize(28, 28)
+        self._loading_label.setFixedSize(40, 40)
         self._loading_movie = QMovie(str(RESOURCES / "load.gif"))
-        self._loading_movie.setScaledSize(QSize(28, 28))
+        self._loading_movie.setScaledSize(QSize(40, 40))
         self._loading_label.setMovie(self._loading_movie)
-        progress_row.addWidget(self._loading_label)
+        main_layout.addWidget(self._loading_label)
+
+        # 2. Vertical layout for progress bar + label
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(0)
+        right_layout.setAlignment(Qt.AlignmentFlag.AlignBottom)
 
         self._progress_bar = ProgressBar()
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setValue(0)
         self._progress_bar.setFixedHeight(10)
-        self._progress_bar.setCustomBarColor(ORANGE_HEXA, ORANGE_HEXA)
-        self._progress_bar.setCustomBackgroundColor(BORDER_HEXA, BORDER_HEXA)
-        progress_row.addWidget(self._progress_bar, 1)
-        layout.addLayout(progress_row)
+        # Apply style for stripe effect (diagonal moving right)
+        self._progress_bar.setStyleSheet(f"""
+            ProgressBar, QProgressBar {{
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border_radius: 5px;
+            }}
+            ProgressBar::chunk, QProgressBar::chunk {{
+                background-color: qlineargradient(spread:repeat, x1:0, y1:0, x2:0.04, y2:0.04, 
+                                                stop:0 {ORANGE_HEXA}, stop:0.499 {ORANGE_HEXA}, 
+                                                stop:0.5 #e67e22, stop:1 #e67e22);
+                border-radius: 5px;
+            }}
+        """)
+        right_layout.addWidget(self._progress_bar)
 
         self._progress_label = CaptionLabel("")
         self._progress_label.setObjectName("statusStripText")
-        self._progress_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self._progress_label.setWordWrap(True)
-        layout.addWidget(self._progress_label)
+        self._progress_label.setStyleSheet(f"color: {TEXT_MUTED_HEXA}; font-weight: bold;")
+        right_layout.addWidget(self._progress_label)
+        
+        main_layout.addLayout(right_layout)
 
         self.setStyleSheet(
             "DownloadBanner {"
@@ -60,7 +76,6 @@ class DownloadBanner(QWidget):
             f"border: 1px solid {BORDER_HEXA};"
             "border-radius: 16px;"
             "}"
-            "DownloadBanner #statusStripText { color: #d6d6d6; }"
         )
         self.setVisible(False)
 
