@@ -10,7 +10,9 @@ from ankama_launcher_emulator.gui.consts import (
     NAV_INACTIVE_HEXA,
     ORANGE_HEXA,
     PANEL_ALT_HEXA,
+    TEXT_DIM_HEXA,
     TEXT_MUTED_HEXA,
+    TEXT_SOFT_HEXA,
 )
 
 
@@ -65,7 +67,7 @@ class GameSelectorCard(QFrame):
         else:
             border = ORANGE_HEXA if active else BORDER_HEXA
             bg = NAV_ACTIVE_HEXA if active else NAV_INACTIVE_HEXA
-            text = "#f3f3f3" if active else "#d0d0d0"
+            text = TEXT_SOFT_HEXA if active else TEXT_DIM_HEXA
         self.setStyleSheet(
             "GameSelectorCard {"
             f"background-color: {bg};"

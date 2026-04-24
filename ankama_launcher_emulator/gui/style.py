@@ -1,5 +1,7 @@
 from PyQt6.QtWidgets import QApplication
 
+from ankama_launcher_emulator.gui.consts import PANEL_ALT_HEXA, TEXT_HEXA
+
 
 _APP_STYLE_MARKER = "/* AnkAlt shared control style */"
 
@@ -10,6 +12,7 @@ PushButton, PrimaryPushButton, ComboBox, LineEdit, PasswordLineEdit {{
     max-height: 28px;
     border-radius: 14px;
     padding: 2px 10px;
+    color: {TEXT_HEXA};
 }}
 
 ComboBox {{
@@ -29,6 +32,11 @@ QListView#comboListWidget, ListWidget#comboListWidget {{
 QListView#comboListWidget::item, ListWidget#comboListWidget::item {{
     min-height: 26px;
     padding: 2px 10px;
+}}
+
+QComboBox QAbstractItemView, QListView#comboListWidget, ListWidget#comboListWidget {{
+    background-color: {PANEL_ALT_HEXA};
+    color: {TEXT_HEXA};
 }}
 """
 

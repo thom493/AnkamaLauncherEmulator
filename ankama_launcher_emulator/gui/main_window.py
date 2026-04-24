@@ -40,9 +40,12 @@ from ankama_launcher_emulator.gui.consts import (
     DOFUS_3_TITLE,
     DOFUS_RETRO_TITLE,
     ORANGE_HEXA,
+    ORANGE_HOVER_HEXA,
     PANEL_ALT_HEXA,
     PANEL_BG_HEXA,
     RED_HEXA,
+    TEXT_DIM_HEXA,
+    TEXT_HEXA,
     TEXT_MUTED_HEXA,
 )
 from ankama_launcher_emulator.gui.download_banner import DownloadBanner
@@ -121,10 +124,13 @@ class MainWindow(QMainWindow):
             f"QWidget#topBar {{ background-color: {PANEL_BG_HEXA}; border: 1px solid {BORDER_HEXA}; border-radius: 20px; }}"
             f"QWidget#topBar CaptionLabel {{ color: {TEXT_MUTED_HEXA}; }}"
             f"CardWidget#warningCard {{ background-color: {PANEL_ALT_HEXA}; border: 1px solid {BORDER_HEXA}; border-radius: 16px; }}"
-            f"CardWidget#warningCard BodyLabel {{ color: #d6d6d6; }}"
+            f"CardWidget#warningCard BodyLabel {{ color: {TEXT_DIM_HEXA}; }}"
             f"CardWidget#warningCard CaptionLabel {{ color: {TEXT_MUTED_HEXA}; }}"
             f"CardWidget#emptyStateCard {{ background-color: {PANEL_BG_HEXA}; border: 1px solid {BORDER_HEXA}; border-radius: 20px; }}"
             f"CardWidget#emptyStateCard BodyLabel {{ color: {TEXT_MUTED_HEXA}; }}"
+            f"QScrollArea {{ background-color: {APP_BG_HEXA}; border: none; }}"
+            f"QScrollArea > QWidget > QWidget {{ background-color: {APP_BG_HEXA}; }}"
+            f"QWidget#cardContainer {{ background-color: {APP_BG_HEXA}; }}"
         )
 
         central = QWidget()
@@ -248,9 +254,13 @@ class MainWindow(QMainWindow):
         add_btn.setStyleSheet(
             "PushButton {"
             f"background-color: {ORANGE_HEXA};"
-            "color: white;"
+            f"color: {TEXT_HEXA};"
+            "border: none;"
             "border-radius: 14px;"
             "padding: 2px 10px;"
+            "}"
+            "PushButton:hover {"
+            f"background-color: {ORANGE_HOVER_HEXA};"
             "}"
         )
         add_btn.clicked.connect(self._open_add_account_dialog)
@@ -265,6 +275,7 @@ class MainWindow(QMainWindow):
         )
 
         self._card_container = QWidget()
+        self._card_container.setObjectName("cardContainer")
         self._card_layout = QVBoxLayout(self._card_container)
         self._card_layout.setContentsMargins(0, 4, 0, 4)
         self._card_layout.setSpacing(10)

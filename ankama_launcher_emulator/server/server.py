@@ -114,6 +114,13 @@ class AnkamaLauncherServer:
             ),
         )
 
+        if self.handler.on_shield_recovery is not None:
+            on_shield = self.handler.on_shield_recovery
+            proxy_listener.on_shield_detected = lambda: on_shield(login)
+        if self.handler.on_session_expired is not None:
+            on_expired = self.handler.on_session_expired
+            proxy_listener.on_session_expired = lambda: on_expired(login)
+
         connection_port = proxy_listener.start(port=0, interface_ip=interface_ip)
 
         return launch_dofus_exe(

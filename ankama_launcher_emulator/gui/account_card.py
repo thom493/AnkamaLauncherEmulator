@@ -2,6 +2,7 @@ import os
 
 import psutil
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QGridLayout, QLabel, QVBoxLayout
 from qfluentwidgets import (
     BodyLabel,
@@ -21,6 +22,7 @@ from ankama_launcher_emulator.gui.consts import (
     BLUE_HEXA,
     PANEL_ALT_HEXA,
     PANEL_BG_HEXA,
+    TEXT_HEXA,
     TEXT_MUTED_HEXA,
 )
 from ankama_launcher_emulator.gui.utils import run_in_background
@@ -87,6 +89,15 @@ class AccountCard(CardWidget):
         layout.setHorizontalSpacing(12)
         layout.setVerticalSpacing(10)
 
+        self.setAutoFillBackground(True)
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(PANEL_BG_HEXA))
+        palette.setColor(QPalette.ColorRole.Base, QColor(PANEL_BG_HEXA))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(TEXT_HEXA))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(TEXT_HEXA))
+        palette.setColor(QPalette.ColorRole.Text, QColor(TEXT_HEXA))
+        self.setPalette(palette)
+
         self.setStyleSheet(
             "AccountCard {"
             f"background-color: {PANEL_BG_HEXA};"
@@ -136,6 +147,7 @@ class AccountCard(CardWidget):
             f"border: 1px solid {BORDER_HEXA};"
             "border-radius: 14px;"
             "padding: 2px 10px;"
+            f"color: {TEXT_HEXA};"
             "}"
         )
 
@@ -163,6 +175,7 @@ class AccountCard(CardWidget):
             f"border: 1px solid {BORDER_HEXA};"
             "border-radius: 14px;"
             "padding: 2px 10px;"
+            f"color: {TEXT_HEXA};"
             "}"
         )
         self._test_proxy_btn.clicked.connect(self._on_test_proxy)
@@ -183,6 +196,7 @@ class AccountCard(CardWidget):
             f"border: 1px solid {BORDER_HEXA};"
             "border-radius: 14px;"
             "padding: 0;"
+            f"color: {TEXT_HEXA};"
             "}"
         )
         self._remove_btn.clicked.connect(self.remove_requested.emit)
@@ -206,6 +220,7 @@ class AccountCard(CardWidget):
                 f"background-color: {ORANGE_HEXA};"
                 "border-radius: 14px;"
                 "padding: 2px 10px;"
+                f"color: {TEXT_HEXA};"
                 "}"
             )
         else:
@@ -215,6 +230,7 @@ class AccountCard(CardWidget):
                 f"background-color: {BLUE_HEXA};"
                 "border-radius: 14px;"
                 "padding: 2px 10px;"
+                f"color: {TEXT_HEXA};"
                 "}"
             )
 
@@ -334,6 +350,7 @@ class AccountCard(CardWidget):
             f"background-color: {ORANGE_HEXA};"
             "border-radius: 14px;"
             "padding: 2px 10px;"
+            f"color: {TEXT_HEXA};"
             "}"
         )
         self._launch_btn.setEnabled(True)

@@ -15,6 +15,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     from qfluentwidgets import (
         Theme,
         setTheme,
+        setThemeColor,
     )
 
 
@@ -27,6 +28,7 @@ def _qt_msg_filter(mode, ctx, msg):
 qInstallMessageHandler(_qt_msg_filter)
 
 from ankama_launcher_emulator.consts import RESOURCES
+from ankama_launcher_emulator.gui.consts import ORANGE_HEXA
 from ankama_launcher_emulator.gui.main_window import MainWindow
 from ankama_launcher_emulator.gui.style import apply_app_style
 from ankama_launcher_emulator.haapi.account_persistence import list_all_api_keys
@@ -42,6 +44,9 @@ def ensure_app() -> QApplication:
     if app is None:
         app = QApplication(sys.argv)
     app = cast(QApplication, app)
+    app.setStyle("Fusion")
+    setTheme(Theme.DARK)
+    setThemeColor(ORANGE_HEXA)
     apply_app_style(app)
     return app
 
@@ -60,8 +65,6 @@ def run_gui() -> None:
     interfaces = get_available_network_interfaces()
 
     app = ensure_app()
-    setTheme(Theme.DARK)
-    apply_app_style(app)
     set_app_icon(app)
 
     window = MainWindow(server, accounts, interfaces)

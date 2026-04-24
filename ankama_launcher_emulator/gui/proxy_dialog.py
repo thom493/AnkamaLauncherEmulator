@@ -24,6 +24,7 @@ from ankama_launcher_emulator.gui.consts import (
     PANEL_ALT_HEXA,
     PANEL_BG_HEXA,
     TEXT_MUTED_HEXA,
+    TEXT_SOFT_HEXA,
 )
 from ankama_launcher_emulator.gui.utils import run_in_background
 from ankama_launcher_emulator.utils.proxy_store import ProxyStore
@@ -156,7 +157,7 @@ class _ProxyEditDialog(QDialog):
             "QDialog {"
             f"background-color: {APP_BG_HEXA};"
             "}"
-            f"QDialog BodyLabel {{ color: #f3f3f3; }}"
+            f"QDialog BodyLabel {{ color: {TEXT_SOFT_HEXA}; }}"
             f"QDialog LineEdit {{ background-color: {PANEL_ALT_HEXA}; border: 1px solid {BORDER_HEXA}; border-radius: 14px; padding: 2px 10px; }}"
         )
 
@@ -206,7 +207,7 @@ class ProxyDialog(QDialog):
             "QDialog {"
             f"background-color: {APP_BG_HEXA};"
             "}"
-            f"QDialog BodyLabel {{ color: #f3f3f3; }}"
+            f"QDialog BodyLabel {{ color: {TEXT_SOFT_HEXA}; }}"
             f"QDialog CaptionLabel {{ color: {TEXT_MUTED_HEXA}; }}"
         )
         self._setup_ui()

@@ -5,6 +5,7 @@ from socket import AF_INET6
 from socket import socket as Socket
 from threading import Thread
 from time import sleep
+from typing import Callable
 
 import socks
 
@@ -31,6 +32,8 @@ class ProxyListener:
     _shutdown_requested: bool = field(default=False, init=False)
     _initial_port: int | None = field(default=None, init=False)
     _interface_ip: str | None = field(default=None, init=False)
+    on_shield_detected: Callable[[], None] | None = field(default=None, init=False)
+    on_session_expired: Callable[[], None] | None = field(default=None, init=False)
 
     def create_bridge(
         self, client_socket: Socket, server_socket: Socket, host_port: int
@@ -42,6 +45,8 @@ class ProxyListener:
                         target_address, interface_ip=self._interface_ip
                     )
                 ),
+                on_shield_detected=self.on_shield_detected,
+                on_session_expired=self.on_session_expired,
                 client_socket=client_socket,
                 server_socket=server_socket,
             )

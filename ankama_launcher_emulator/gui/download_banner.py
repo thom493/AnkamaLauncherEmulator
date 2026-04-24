@@ -1,7 +1,7 @@
 import re
 
 from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QMovie
+from PyQt6.QtGui import QColor, QMovie
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget, QFrame
 from qfluentwidgets import CaptionLabel, ProgressBar
 
@@ -9,6 +9,7 @@ from ankama_launcher_emulator.consts import RESOURCES
 from ankama_launcher_emulator.gui.consts import (
     BORDER_HEXA,
     ORANGE_HEXA,
+    ORANGE_HOVER_HEXA,
     PANEL_ALT_HEXA,
     TEXT_MUTED_HEXA,
 )
@@ -47,20 +48,7 @@ class DownloadBanner(QWidget):
 
         self._progress_bar = ProgressBar()
         self._progress_bar.setFixedHeight(10)
-        # Apply style for stripe effect (diagonal moving right)
-        self._progress_bar.setStyleSheet(f"""
-            ProgressBar, QProgressBar {{
-                background-color: rgba(255, 255, 255, 0.08);
-                border: none;
-                border_radius: 5px;
-            }}
-            ProgressBar::chunk, QProgressBar::chunk {{
-                background-color: qlineargradient(spread:repeat, x1:0, y1:0, x2:0.04, y2:0.04, 
-                                                stop:0 {ORANGE_HEXA}, stop:0.499 {ORANGE_HEXA}, 
-                                                stop:0.5 #e67e22, stop:1 #e67e22);
-                border-radius: 5px;
-            }}
-        """)
+        self._progress_bar.setCustomBarColor(QColor(ORANGE_HEXA), QColor(ORANGE_HOVER_HEXA))
         right_layout.addWidget(self._progress_bar)
 
         self._progress_label = CaptionLabel("")
