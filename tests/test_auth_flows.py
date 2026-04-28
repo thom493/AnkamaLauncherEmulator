@@ -601,7 +601,6 @@ class AuthFlowTests(unittest.TestCase):
             haapi.createToken(102, None)
 
     @patch("ankama_launcher_emulator.server.handler.os.unlink")
-    @patch("ankama_launcher_emulator.server.handler.CryptoHelper.get_crypto_context")
     @patch("ankama_launcher_emulator.server.handler.CryptoHelper.createHashFromStringSha", return_value="abc123")
     @patch("ankama_launcher_emulator.server.handler.CryptoHelper.getStoredCertificate")
     @patch("ankama_launcher_emulator.server.handler.CryptoHelper.get_crypto_context")
@@ -610,7 +609,6 @@ class AuthFlowTests(unittest.TestCase):
         get_crypto_context,
         get_stored_certificate,
         _hash,
-        _ctx2,
         mock_unlink,
     ):
         """P3: when ShieldRecoveryRequired is raised, stale cert file is deleted."""
@@ -641,29 +639,40 @@ class AuthFlowTests(unittest.TestCase):
 
     @_patch_credentials
     @patch("ankama_launcher_emulator.gui.main_window.run_in_background")
-    def test_shield_light_warns_when_proxy_blocked(self, run_in_background, _creds):
-        """P4: when proactive test detects blocked proxy, error shown and launch re-enabled."""
+    def test_shield_light_proceeds_directly_to_email_code_request(self, run_in_background, _creds):
+        """P4: shield light flow requests email code without any proactive proxy test.
+
+        A new proxy that legitimately needs shield cert returns the same 403 as a
+        blocked proxy on SignOnWithApiKey — no reliable distinction exists at that
+        layer. Proxy-blocked detection is left to Tier-2 resend counter only.
+        """
         window = MainWindow(
             _DummyServer(),
             [{"apikey": {"login": "demo@example.com"}}],
             {},
         )
         card = window._find_card("demo@example.com")
+        assert card is not None
         window._launch_contexts["demo@example.com"] = {
-            "proxy_url": "socks5://blocked:9050",
+            "proxy_url": "socks5://new-proxy:9050",
             "interface_ip": None,
         }
 
-        def simulate_blocked(task, on_success=None, on_error=None, on_progress=None, parent=None):
-            on_error(RuntimeError("__proxy_blocked__"))
+        tasks_dispatched = []
 
-        run_in_background.side_effect = simulate_blocked
+        def capture_task(task, **_kwargs):
+            tasks_dispatched.append(task)
 
-        with patch.object(window, "_show_error") as mock_error:
-            window._handle_shield_light("demo@example.com", MagicMock(), card)
+        run_in_background.side_effect = capture_task
+        window._handle_shield_light("demo@example.com", MagicMock(), card)
 
-        mock_error.assert_called_once()
-        self.assertIn("proxy", mock_error.call_args.args[0].lower())
+        self.assertEqual(len(tasks_dispatched), 1, "Expected exactly one background task (request_code)")
+        # Verify no check_proxy_needs_shield import left in scope
+        import ankama_launcher_emulator.gui.main_window as mw_module
+        self.assertFalse(
+            hasattr(mw_module, "check_proxy_needs_shield"),
+            "check_proxy_needs_shield must not be importable from main_window",
+        )
 
     def test_shield_code_dialog_resend_button_shows_warning_after_max_attempts(self):
         """P4: resend counter in ShieldCodeDialog shows warning after 3 resends."""
@@ -673,30 +682,34 @@ class AuthFlowTests(unittest.TestCase):
         resend_signal_count = []
         dialog.resend_requested.connect(lambda: resend_signal_count.append(1))
 
-        self.assertFalse(dialog._proxy_warning.isVisible())
+        # Initially hidden — isVisibleTo checks parent-agnostic explicit visibility
+        self.assertFalse(dialog._proxy_warning.isVisibleTo(dialog))
 
         dialog._on_resend()
         self.assertEqual(len(resend_signal_count), 1)
-        self.assertFalse(dialog._proxy_warning.isVisible())
+        self.assertFalse(dialog._proxy_warning.isVisibleTo(dialog))
 
         dialog._resend_btn.setEnabled(True)
         dialog._on_resend()
-        self.assertFalse(dialog._proxy_warning.isVisible())
+        self.assertFalse(dialog._proxy_warning.isVisibleTo(dialog))
 
         dialog._resend_btn.setEnabled(True)
         dialog._on_resend()
-        self.assertTrue(dialog._proxy_warning.isVisible(), "Warning should appear after 3 resends")
+        self.assertTrue(
+            dialog._proxy_warning.isVisibleTo(dialog),
+            "Warning should appear after 3 resends",
+        )
 
     def test_shield_code_dialog_resend_done_false_shows_warning_immediately(self):
         """P4: resend_done(success=False) shows warning before max attempts."""
         from ankama_launcher_emulator.gui.shield_dialog import ShieldCodeDialog
 
         dialog = ShieldCodeDialog("demo@example.com")
-        self.assertFalse(dialog._proxy_warning.isVisible())
+        self.assertFalse(dialog._proxy_warning.isVisibleTo(dialog))
 
         dialog.resend_done(success=False)
 
-        self.assertTrue(dialog._proxy_warning.isVisible())
+        self.assertTrue(dialog._proxy_warning.isVisibleTo(dialog))
         self.assertTrue(dialog._resend_btn.isEnabled())
 
     # --- P5: official account protection ---
@@ -722,7 +735,7 @@ class AuthFlowTests(unittest.TestCase):
              patch("ankama_launcher_emulator.haapi.account_persistence.CryptoHelper.get_crypto_context") as ctx, \
              patch("ankama_launcher_emulator.haapi.account_persistence.CryptoHelper.getStoredApiKey", return_value=managed_acc), \
              patch("ankama_launcher_emulator.haapi.account_persistence.CryptoHelper.getStoredApiKeys", return_value=[official_acc]), \
-             patch("ankama_launcher_emulator.haapi.account_persistence.Device.getUUID", return_value="uuid"):
+             patch("ankama_launcher_emulator.decrypter.device.Device.getUUID", return_value="uuid"):
 
             mock_meta.return_value.all_entries.return_value = {"managed@test.com": {"fake_uuid": "uuid"}}
             mock_meta.return_value.repair_corrupt_entries.return_value = 0
@@ -752,7 +765,8 @@ class AuthFlowTests(unittest.TestCase):
         from ankama_launcher_emulator.gui.account_card import AccountCard
 
         card = AccountCard("managed@test.com", {}, _ProxyStore(), is_official=False)
-        self.assertTrue(card._remove_btn.isVisible())
+        # isVisibleTo checks "would be visible if parent were shown" — parent-agnostic
+        self.assertTrue(card._remove_btn.isVisibleTo(card))
 
     @_patch_credentials
     def test_remove_account_blocked_for_official_accounts(self, _creds):

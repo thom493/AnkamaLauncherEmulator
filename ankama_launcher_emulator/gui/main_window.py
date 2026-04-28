@@ -64,7 +64,6 @@ from ankama_launcher_emulator.haapi.account_persistence import (
 )
 from ankama_launcher_emulator.haapi.pkce_auth import ZaapPkceSession
 from ankama_launcher_emulator.haapi.shield import (
-    check_proxy_needs_shield,
     request_security_code,
     store_shield_certificate,
     validate_security_code,
@@ -441,10 +440,6 @@ class MainWindow(QMainWindow):
             api_key = CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)[
                 "apikey"
             ]["key"]
-            if proxy_url:
-                on_progress("Testing proxy against Ankama...")
-                if check_proxy_needs_shield(api_key, proxy_url):
-                    raise RuntimeError("__proxy_blocked__")
             on_progress("Requesting security code via email...")
             request_security_code(api_key, proxy_url=proxy_url)
             logger.info("[SHIELD] Security code requested via email")
@@ -458,13 +453,6 @@ class MainWindow(QMainWindow):
             )
 
         def on_error(exc: object) -> None:
-            if "__proxy_blocked__" in str(exc):
-                self._show_error(
-                    "Proxy appears blocked by Ankama. Change your proxy and try again."
-                )
-                self._set_panel_status("")
-                card.set_launch_enabled(True)
-                return
             if _is_unauthorized(exc):
                 logger.info(
                     f"[SHIELD] Light 401 on SecurityCode for {login}, escalating"
