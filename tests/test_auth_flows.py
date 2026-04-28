@@ -1,7 +1,10 @@
 import os
 import sys
+import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
+
+import requests
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -39,11 +42,22 @@ class _ProxyStore:
     def get_assignment(self, _login):
         return None
 
+    def get_proxy_url(self, _login):
+        return None
+
     def assign_proxy(self, _login, _proxy_id):
         return None
 
     def save_validated(self, _login, _proxy_url):
         return None
+
+
+# Patch applied at class level to avoid Mac Device.getOsVersion crash in all
+# tests that need to instantiate AccountCard / MainWindow.
+_patch_credentials = patch(
+    "ankama_launcher_emulator.gui.account_card.has_active_credentials",
+    return_value=False,
+)
 
 
 class AuthFlowTests(unittest.TestCase):
@@ -92,7 +106,8 @@ class AuthFlowTests(unittest.TestCase):
         )
         self.assertTrue(dialog._add_btn.isEnabled())
 
-    def test_main_window_wires_server_shield_recovery_callback(self):
+    @_patch_credentials
+    def test_main_window_wires_server_shield_recovery_callback(self, _creds):
         server = _ServerWithHandler()
 
         window = MainWindow(
@@ -107,14 +122,16 @@ class AuthFlowTests(unittest.TestCase):
             window,
         )
 
+    @_patch_credentials
     @patch("ankama_launcher_emulator.gui.main_window.QTimer.singleShot")
-    @patch.object(MainWindow, "_handle_shield_recovery")
+    @patch.object(MainWindow, "_handle_shield_light")
     @patch.object(MainWindow, "_current_launch_fn")
-    def test_server_shield_recovery_callback_routes_known_login_to_recovery_handler(
+    def test_server_shield_recovery_callback_routes_known_login_to_shield_light(
         self,
         current_launch_fn,
-        handle_shield_recovery,
+        handle_shield_light,
         single_shot,
+        _creds,
     ):
         server = _ServerWithHandler()
         window = MainWindow(
@@ -128,9 +145,8 @@ class AuthFlowTests(unittest.TestCase):
 
         window._on_server_shield_recovery("demo@example.com")
 
-        err, routed_launch, card = handle_shield_recovery.call_args.args
-        self.assertIsInstance(err, ShieldRecoveryRequired)
-        self.assertEqual(err.login, "demo@example.com")
+        login_arg, routed_launch, card = handle_shield_light.call_args.args
+        self.assertEqual(login_arg, "demo@example.com")
         self.assertIs(routed_launch, launch)
         self.assertEqual(card.login, "demo@example.com")
 
@@ -249,7 +265,8 @@ class AuthFlowTests(unittest.TestCase):
 
         data = complete_embedded_login("auth-code", session, "demo@example.com")
 
-        session.exchange.assert_called_once_with("auth-code")
+        # exchange is called with "auth-code"; cookies kwarg may be passed by impl
+        session.exchange.assert_called_once_with("auth-code", cookies=ANY)
         fetch_account_profile.assert_called_once_with("access-token")
         self.assertEqual(
             data,
@@ -415,59 +432,342 @@ class AuthFlowTests(unittest.TestCase):
             hm2="hm2",
         )
 
+    @_patch_credentials
     @patch("ankama_launcher_emulator.gui.main_window.run_in_background")
-    @patch.object(MainWindow, "_handle_shield_recovery")
-    def test_launch_handler_routes_shield_recovery_required(
+    @patch.object(MainWindow, "_handle_shield_light")
+    def test_proxy_change_detected_before_launch_triggers_shield_light(
         self,
-        handle_shield_recovery,
+        handle_shield_light,
         run_in_background,
+        _creds,
     ):
+        """P2: pre-launch cert proxy change check routes to shield light, skips run_in_background."""
         window = MainWindow(
             _DummyServer(),
             [{"apikey": {"login": "demo@example.com"}}],
             {},
         )
-        card = MagicMock()
-        handler = window._make_launch_handler("demo@example.com", card)
+        card = window._find_card("demo@example.com")
+        proxy_store = MagicMock()
+        proxy_store.get_proxy_url.return_value = "socks5://new-proxy:9050"
+        window._proxy_store = proxy_store
 
-        def fail_launch(task, on_success=None, on_error=None, on_progress=None, parent=None):
-            del task, on_success, on_progress, parent
-            on_error(ShieldRecoveryRequired("demo@example.com"))
+        with patch("ankama_launcher_emulator.gui.main_window.AccountMeta") as mock_meta:
+            mock_meta.return_value.cert_proxy_changed.return_value = True
+            mock_meta.return_value.get.return_value = {"portable_mode": False}
+            handler = window._make_launch_handler("demo@example.com", card)
+            handler(None, "some-proxy-id")
 
-        run_in_background.side_effect = fail_launch
+        handle_shield_light.assert_called_once()
+        run_in_background.assert_not_called()
 
-        handler(None, None)
+    # --- P1: remove_account subdir cleanup ---
 
-        handle_shield_recovery.assert_called_once()
-
-    @patch("ankama_launcher_emulator.gui.main_window.verify_proxy_ip")
-    @patch("ankama_launcher_emulator.gui.main_window.build_proxy_listener")
-    @patch.object(MainWindow, "_check_shield")
-    def test_proxy_launch_does_not_force_oauth_refresh_before_create_token(
+    @patch("ankama_launcher_emulator.haapi.account_manager.os.rmdir")
+    @patch("ankama_launcher_emulator.haapi.account_manager.os.unlink")
+    @patch("ankama_launcher_emulator.haapi.account_manager.AccountMeta")
+    @patch("ankama_launcher_emulator.haapi.account_manager.CryptoHelper.createHashFromStringSha", return_value="abc123")
+    @patch("ankama_launcher_emulator.haapi.account_manager.Device.getUUID", return_value="dev-uuid")
+    @patch("ankama_launcher_emulator.haapi.account_manager.CryptoHelper.getStoredApiKey")
+    def test_remove_account_calls_rmdir_on_per_account_subdirs(
         self,
-        check_shield,
-        build_proxy_listener,
-        verify_proxy_ip,
+        mock_get_key,
+        _get_uuid,
+        _hash,
+        mock_meta,
+        mock_unlink,
+        mock_rmdir,
     ):
-        proxy_listener = MagicMock()
-        proxy_listener.start.return_value = 5555
-        build_proxy_listener.return_value = (proxy_listener, "socks5://127.0.0.1:9050")
+        from ankama_launcher_emulator.haapi.account_manager import remove_account
 
+        mock_get_key.return_value = {"apikeyFile": ".keyabc123", "apikey": {}}
+        mock_meta.return_value.get.return_value = {"fake_uuid": "fake-uuid"}
+
+        remove_account("demo@example.com", api_key=None)
+
+        self.assertGreater(mock_rmdir.call_count, 0, "os.rmdir should be called to clean up per-account subdirs")
+        rmdir_paths = [c.args[0] for c in mock_rmdir.call_args_list]
+        self.assertTrue(
+            any("abc123" in p for p in rmdir_paths),
+            f"Expected per-account sha subdir in rmdir calls, got: {rmdir_paths}",
+        )
+
+    def test_remove_account_subdir_cleanup_leaves_no_empty_dirs(self):
+        """Integration: actual filesystem dirs are removed after remove_account."""
+        from ankama_launcher_emulator.haapi.account_manager import remove_account
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cert_hash = "deadbeef12345678"
+            key_dir = os.path.join(tmpdir, "keydata", cert_hash)
+            cert_dir = os.path.join(tmpdir, "cert", cert_hash)
+            os.makedirs(key_dir)
+            os.makedirs(cert_dir)
+            key_file = os.path.join(key_dir, f".key{cert_hash}")
+            cert_file = os.path.join(cert_dir, f".certif{cert_hash}")
+            open(key_file, "w").close()
+            open(cert_file, "w").close()
+
+            from ankama_launcher_emulator.consts import (
+                ALT_API_KEY_FOLDER_PATH,
+                ALT_CERTIFICATE_FOLDER_PATH,
+            )
+
+            mock_stored = {"apikeyFile": f".key{cert_hash}", "apikey": {}}
+
+            with patch("ankama_launcher_emulator.haapi.account_manager.CryptoHelper.getStoredApiKey", return_value=mock_stored), \
+                 patch("ankama_launcher_emulator.haapi.account_manager.CryptoHelper.createHashFromStringSha", return_value=cert_hash), \
+                 patch("ankama_launcher_emulator.haapi.account_manager.Device.getUUID", return_value="uuid"), \
+                 patch("ankama_launcher_emulator.haapi.account_manager.AccountMeta") as mock_meta, \
+                 patch("ankama_launcher_emulator.haapi.account_manager.ALT_API_KEY_FOLDER_PATH", os.path.join(tmpdir, "keydata")), \
+                 patch("ankama_launcher_emulator.haapi.account_manager.ALT_CERTIFICATE_FOLDER_PATH", os.path.join(tmpdir, "cert")):
+                mock_meta.return_value.get.return_value = {"fake_uuid": "fake-uuid"}
+                remove_account("demo@example.com", api_key=None)
+
+            self.assertFalse(os.path.exists(key_dir), "key subdir should be deleted")
+            self.assertFalse(os.path.exists(cert_dir), "cert subdir should be deleted")
+
+    # --- P2: cert validation tracking ---
+
+    def test_account_meta_cert_proxy_changed_returns_false_when_no_record(self):
+        from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+        meta = AccountMeta()
+        meta._data = {}
+        self.assertFalse(meta.cert_proxy_changed("demo@example.com", "socks5://1.2.3.4:9050"))
+
+    def test_account_meta_cert_proxy_changed_detects_proxy_switch(self):
+        from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+        meta = AccountMeta()
+        meta._data = {"demo@example.com": {"cert_validated_proxy_url": "socks5://old:9050"}}
+        self.assertTrue(meta.cert_proxy_changed("demo@example.com", "socks5://new:9050"))
+        self.assertFalse(meta.cert_proxy_changed("demo@example.com", "socks5://old:9050"))
+
+    def test_account_meta_cert_proxy_changed_detects_proxy_removal(self):
+        from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+        meta = AccountMeta()
+        meta._data = {"demo@example.com": {"cert_validated_proxy_url": "socks5://old:9050"}}
+        self.assertTrue(meta.cert_proxy_changed("demo@example.com", None))
+
+    def test_account_meta_record_cert_validated_persists_proxy_url(self):
+        from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+        meta = AccountMeta()
+        meta._data = {"demo@example.com": {}}
+        with patch.object(meta, "_save") as mock_save:
+            meta.record_cert_validated("demo@example.com", "socks5://1.2.3.4:9050")
+
+        self.assertEqual(
+            meta._data["demo@example.com"]["cert_validated_proxy_url"],
+            "socks5://1.2.3.4:9050",
+        )
+        mock_save.assert_called_once()
+
+    # --- P3: 500 error fallback ---
+
+    def test_create_token_500_with_certificate_raises_shield_recovery_required(self):
+        """P3: 500 from Ankama when cert is sent → treated as stale cert."""
+        haapi = Haapi("apikey", "demo@example.com", None, None)
+        haapi.zaap_session = MagicMock()
+        response = MagicMock()
+        response.status_code = 500
+        haapi.zaap_session.get.return_value = response
+
+        with patch(
+            "ankama_launcher_emulator.haapi.haapi.CryptoHelper.generateHashFromCertif",
+            return_value="cert-hash",
+        ):
+            with self.assertRaises(ShieldRecoveryRequired) as ctx:
+                haapi.createToken(
+                    102,
+                    {"id": 42, "encodedCertificate": "abc", "login": "demo@example.com"},
+                    hm1="hm1",
+                    hm2="hm2",
+                )
+
+        self.assertEqual(ctx.exception.login, "demo@example.com")
+
+    def test_create_token_500_without_certificate_propagates_http_error(self):
+        """P3: 500 without cert (no cert sent) still raises HTTPError."""
+        haapi = Haapi("apikey", "demo@example.com", None, None)
+        haapi.zaap_session = MagicMock()
+        response = MagicMock()
+        response.status_code = 500
+        response.raise_for_status.side_effect = requests.exceptions.HTTPError("500 Server Error")
+        haapi.zaap_session.get.return_value = response
+
+        with self.assertRaises(requests.exceptions.HTTPError):
+            haapi.createToken(102, None)
+
+    @patch("ankama_launcher_emulator.server.handler.os.unlink")
+    @patch("ankama_launcher_emulator.server.handler.CryptoHelper.get_crypto_context")
+    @patch("ankama_launcher_emulator.server.handler.CryptoHelper.createHashFromStringSha", return_value="abc123")
+    @patch("ankama_launcher_emulator.server.handler.CryptoHelper.getStoredCertificate")
+    @patch("ankama_launcher_emulator.server.handler.CryptoHelper.get_crypto_context")
+    def test_auth_get_game_token_deletes_stale_cert_on_shield_recovery(
+        self,
+        get_crypto_context,
+        get_stored_certificate,
+        _hash,
+        _ctx2,
+        mock_unlink,
+    ):
+        """P3: when ShieldRecoveryRequired is raised, stale cert file is deleted."""
+        get_crypto_context.return_value = ("uuid", "/certdir", "/keydir", "hm1", "hm2")
+        get_stored_certificate.side_effect = FileNotFoundError
+
+        handler = AnkamaLauncherHandler()
+        haapi = MagicMock()
+        haapi.login = "demo@example.com"
+        haapi.createToken.side_effect = ShieldRecoveryRequired("demo@example.com")
+        handler.infos_by_hash["hash"] = AccountGameInfo(
+            login="demo@example.com",
+            game_id=102,
+            api_key="apikey",
+            haapi=haapi,
+        )
+        handler.on_shield_recovery = MagicMock()
+
+        with self.assertRaises(ShieldRecoveryRequired):
+            handler.auth_getGameToken("hash", 102)
+
+        mock_unlink.assert_called_once()
+        deleted_path = mock_unlink.call_args.args[0]
+        self.assertIn(".certif", deleted_path)
+        self.assertIn("abc123", deleted_path)
+
+    # --- P4: proxy blacklist detection ---
+
+    @_patch_credentials
+    @patch("ankama_launcher_emulator.gui.main_window.run_in_background")
+    def test_shield_light_warns_when_proxy_blocked(self, run_in_background, _creds):
+        """P4: when proactive test detects blocked proxy, error shown and launch re-enabled."""
         window = MainWindow(
             _DummyServer(),
             [{"apikey": {"login": "demo@example.com"}}],
             {},
         )
+        card = window._find_card("demo@example.com")
+        window._launch_contexts["demo@example.com"] = {
+            "proxy_url": "socks5://blocked:9050",
+            "interface_ip": None,
+        }
 
-        progress_updates = []
-        pid = window._launch_dofus(
-            "demo@example.com",
-            interface_ip=None,
-            proxy_url="socks5://127.0.0.1:9050",
-            on_progress=progress_updates.append,
+        def simulate_blocked(task, on_success=None, on_error=None, on_progress=None, parent=None):
+            on_error(RuntimeError("__proxy_blocked__"))
+
+        run_in_background.side_effect = simulate_blocked
+
+        with patch.object(window, "_show_error") as mock_error:
+            window._handle_shield_light("demo@example.com", MagicMock(), card)
+
+        mock_error.assert_called_once()
+        self.assertIn("proxy", mock_error.call_args.args[0].lower())
+
+    def test_shield_code_dialog_resend_button_shows_warning_after_max_attempts(self):
+        """P4: resend counter in ShieldCodeDialog shows warning after 3 resends."""
+        from ankama_launcher_emulator.gui.shield_dialog import ShieldCodeDialog
+
+        dialog = ShieldCodeDialog("demo@example.com")
+        resend_signal_count = []
+        dialog.resend_requested.connect(lambda: resend_signal_count.append(1))
+
+        self.assertFalse(dialog._proxy_warning.isVisible())
+
+        dialog._on_resend()
+        self.assertEqual(len(resend_signal_count), 1)
+        self.assertFalse(dialog._proxy_warning.isVisible())
+
+        dialog._resend_btn.setEnabled(True)
+        dialog._on_resend()
+        self.assertFalse(dialog._proxy_warning.isVisible())
+
+        dialog._resend_btn.setEnabled(True)
+        dialog._on_resend()
+        self.assertTrue(dialog._proxy_warning.isVisible(), "Warning should appear after 3 resends")
+
+    def test_shield_code_dialog_resend_done_false_shows_warning_immediately(self):
+        """P4: resend_done(success=False) shows warning before max attempts."""
+        from ankama_launcher_emulator.gui.shield_dialog import ShieldCodeDialog
+
+        dialog = ShieldCodeDialog("demo@example.com")
+        self.assertFalse(dialog._proxy_warning.isVisible())
+
+        dialog.resend_done(success=False)
+
+        self.assertTrue(dialog._proxy_warning.isVisible())
+        self.assertTrue(dialog._resend_btn.isEnabled())
+
+    # --- P5: official account protection ---
+
+    def test_list_all_api_keys_tags_official_folder_accounts(self):
+        """P5: accounts from official Zaap folder scan get is_official=True."""
+        from ankama_launcher_emulator.haapi.account_persistence import list_all_api_keys
+
+        managed_acc = {
+            "apikeyFile": ".keymanaged",
+            "apikey": {"login": "managed@test.com", "key": "k", "provider": "ankama",
+                       "refreshToken": "", "isStayLoggedIn": True, "accountId": 1,
+                       "certificate": {}, "refreshDate": 0},
+        }
+        official_acc = {
+            "apikeyFile": ".keyofficial",
+            "apikey": {"login": "official@test.com", "key": "k", "provider": "ankama",
+                       "refreshToken": "", "isStayLoggedIn": True, "accountId": 2,
+                       "certificate": {}, "refreshDate": 0},
+        }
+
+        with patch("ankama_launcher_emulator.haapi.account_persistence.AccountMeta") as mock_meta, \
+             patch("ankama_launcher_emulator.haapi.account_persistence.CryptoHelper.get_crypto_context") as ctx, \
+             patch("ankama_launcher_emulator.haapi.account_persistence.CryptoHelper.getStoredApiKey", return_value=managed_acc), \
+             patch("ankama_launcher_emulator.haapi.account_persistence.CryptoHelper.getStoredApiKeys", return_value=[official_acc]), \
+             patch("ankama_launcher_emulator.haapi.account_persistence.Device.getUUID", return_value="uuid"):
+
+            mock_meta.return_value.all_entries.return_value = {"managed@test.com": {"fake_uuid": "uuid"}}
+            mock_meta.return_value.repair_corrupt_entries.return_value = 0
+            ctx.return_value = ("uuid", "/cert", "/key", "hm1", "hm2")
+
+            results = list_all_api_keys()
+
+        managed = next((r for r in results if r["apikey"]["login"] == "managed@test.com"), None)
+        official = next((r for r in results if r["apikey"]["login"] == "official@test.com"), None)
+
+        self.assertIsNotNone(managed)
+        self.assertIsNotNone(official)
+        self.assertFalse(managed.get("is_official", False), "managed account must NOT be is_official")
+        self.assertTrue(official.get("is_official", False), "official Zaap account must be is_official")
+
+    @_patch_credentials
+    def test_official_account_card_hides_remove_button(self, _creds):
+        """P5: AccountCard with is_official=True hides the X remove button."""
+        from ankama_launcher_emulator.gui.account_card import AccountCard
+
+        card = AccountCard("official@test.com", {}, _ProxyStore(), is_official=True)
+        self.assertFalse(card._remove_btn.isVisible())
+
+    @_patch_credentials
+    def test_managed_account_card_shows_remove_button(self, _creds):
+        """P5: AccountCard with is_official=False (default) shows the X remove button."""
+        from ankama_launcher_emulator.gui.account_card import AccountCard
+
+        card = AccountCard("managed@test.com", {}, _ProxyStore(), is_official=False)
+        self.assertTrue(card._remove_btn.isVisible())
+
+    @_patch_credentials
+    def test_remove_account_blocked_for_official_accounts(self, _creds):
+        """P5: _on_remove_account rejects deletion when no AccountMeta entry (official)."""
+        window = MainWindow(
+            _DummyServer(),
+            [{"apikey": {"login": "demo@example.com"}}],
+            {},
         )
+        card = window._find_card("demo@example.com")
 
-        self.assertEqual(pid, 1234)
-        verify_proxy_ip.assert_called_once_with("socks5://127.0.0.1:9050")
-        check_shield.assert_called_once()
-        self.assertEqual(progress_updates, ["Verifying proxy..."])
+        with patch("ankama_launcher_emulator.gui.main_window.AccountMeta") as mock_meta, \
+             patch.object(window, "_show_error") as mock_error:
+            mock_meta.return_value.get.return_value = None  # no meta = official account
+            window._on_remove_account("demo@example.com", card)
+
+        mock_error.assert_called_once()
+        self.assertIn("official", mock_error.call_args.args[0].lower())

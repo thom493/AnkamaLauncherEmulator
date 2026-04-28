@@ -64,6 +64,7 @@ from ankama_launcher_emulator.haapi.account_persistence import (
 )
 from ankama_launcher_emulator.haapi.pkce_auth import ZaapPkceSession
 from ankama_launcher_emulator.haapi.shield import (
+    check_proxy_needs_shield,
     request_security_code,
     store_shield_certificate,
     validate_security_code,
@@ -328,8 +329,10 @@ class MainWindow(QMainWindow):
 
     def _add_card(self, account: dict, all_interface: dict) -> AccountCard:
         login = account["apikey"]["login"]
+        is_official = bool(account.get("is_official", False))
         card = AccountCard(
-            login, all_interface, self._proxy_store, self._card_container
+            login, all_interface, self._proxy_store, self._card_container,
+            is_official=is_official,
         )
         self._cards.append(card)
         card.launch_requested.connect(self._make_launch_handler(login, card))
@@ -378,6 +381,11 @@ class MainWindow(QMainWindow):
                 "proxy_url": proxy_url,
                 "portable": portable,
             }
+
+            if AccountMeta().cert_proxy_changed(login, proxy_url):
+                logger.info(f"[LAUNCH] Proxy changed since cert validation for {login}, triggering shield refresh")
+                self._handle_shield_light(login, launch, card)
+                return
 
             def on_success(result: object) -> None:
                 self._show_success(f"Game launch for {login}")
@@ -433,6 +441,10 @@ class MainWindow(QMainWindow):
             api_key = CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)[
                 "apikey"
             ]["key"]
+            if proxy_url:
+                on_progress("Testing proxy against Ankama...")
+                if check_proxy_needs_shield(api_key, proxy_url):
+                    raise RuntimeError("__proxy_blocked__")
             on_progress("Requesting security code via email...")
             request_security_code(api_key, proxy_url=proxy_url)
             logger.info("[SHIELD] Security code requested via email")
@@ -446,6 +458,13 @@ class MainWindow(QMainWindow):
             )
 
         def on_error(exc: object) -> None:
+            if "__proxy_blocked__" in str(exc):
+                self._show_error(
+                    "Proxy appears blocked by Ankama. Change your proxy and try again."
+                )
+                self._set_panel_status("")
+                card.set_launch_enabled(True)
+                return
             if _is_unauthorized(exc):
                 logger.info(
                     f"[SHIELD] Light 401 on SecurityCode for {login}, escalating"
@@ -641,6 +660,7 @@ class MainWindow(QMainWindow):
             )
             on_progress("Storing refreshed certificate...")
             store_shield_certificate(login, cert_data, cert_folder, uuid_active)
+            AccountMeta().record_cert_validated(login, proxy_url)
             alias = cast(str | None, (AccountMeta().get(login) or {}).get("alias"))
             if alias is None:
                 alias = cast(str | None, data.get("nickname")) or None
@@ -699,6 +719,25 @@ class MainWindow(QMainWindow):
                 "Enter the code below to verify this device."
             ),
         )
+
+        def _do_resend(_on_progress: object) -> None:
+            request_security_code(api_key, proxy_url=proxy_url)
+
+        def _on_resend_success(_result: object) -> None:
+            dialog.resend_done(success=True)
+
+        def _on_resend_error(_err: object) -> None:
+            dialog.resend_done(success=False)
+
+        dialog.resend_requested.connect(
+            lambda: run_in_background(
+                _do_resend,
+                on_success=_on_resend_success,
+                on_error=_on_resend_error,
+                parent=self,
+            )
+        )
+
         if dialog.exec() != QDialog.DialogCode.Accepted:
             card.set_launch_enabled(True)
             return
@@ -719,6 +758,7 @@ class MainWindow(QMainWindow):
             logger.info("[SHIELD] ValidateCode success")
             on_progress("Storing certificate...")
             store_shield_certificate(login, cert_data, cert_folder, uuid_active)
+            AccountMeta().record_cert_validated(login, proxy_url)
             if proxy_url:
                 self._proxy_store.save_validated(login, proxy_url)
             on_progress("Shield validated, launching...")
@@ -800,6 +840,9 @@ class MainWindow(QMainWindow):
     def _on_remove_account(self, login: str, card: AccountCard) -> None:
         if card.is_running:
             self._show_error("Stop the game before removing")
+            return
+        if AccountMeta().get(login) is None:
+            self._show_error("Cannot remove accounts managed by the official launcher.")
             return
 
         reply = QMessageBox.question(

@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from threading import Timer
 from typing import Callable
@@ -79,6 +80,15 @@ class AnkamaLauncherHandler:
                 gameId, certificate_datas, hm1=hm1, hm2=hm2
             )
         except ShieldRecoveryRequired as err:
+            try:
+                _, cf, _, _, _ = CryptoHelper.get_crypto_context(err.login)
+                cert_path = os.path.join(
+                    cf, ".certif" + CryptoHelper.createHashFromStringSha(err.login)
+                )
+                os.unlink(cert_path)
+                logger.info(f"[HANDLER] Deleted stale cert for {err.login}")
+            except (FileNotFoundError, OSError):
+                pass
             if self.on_shield_recovery is not None:
                 self.on_shield_recovery(err.login)
             raise

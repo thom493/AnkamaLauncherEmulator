@@ -147,6 +147,19 @@ class AccountMeta:
             or entry.get("last_launch_interface_ip") != interface_ip
         )
 
+    def record_cert_validated(self, login: str, proxy_url: str | None) -> None:
+        entry = self._data.get(login, {})
+        entry["cert_validated_proxy_url"] = proxy_url
+        self._data[login] = entry
+        self._save()
+
+    def cert_proxy_changed(self, login: str, proxy_url: str | None) -> bool:
+        """True if current proxy differs from the one used when cert was last validated."""
+        entry = self._data.get(login) or {}
+        if "cert_validated_proxy_url" not in entry:
+            return False  # no record yet — let reactive 403 handle it
+        return entry.get("cert_validated_proxy_url") != proxy_url
+
     def is_proxy_used(self, proxy_url: str, exclude_login: str | None = None) -> bool:
         for _login, entry in self._data.items():
             if exclude_login and _login == exclude_login:

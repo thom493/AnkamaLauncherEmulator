@@ -80,10 +80,22 @@ def remove_account(login: str, api_key: str | None = None) -> None:
             logger.debug(f"[REMOVE] Key not in {key_folder}: {err}")
 
         try:
+            os.rmdir(key_folder)
+            logger.info(f"[REMOVE] Deleted dir {key_folder}")
+        except OSError:
+            pass  # flat official folder or non-empty — skip
+
+        try:
             os.unlink(os.path.join(cert_folder, f".certif{cert_hash}"))
             logger.info(f"[REMOVE] Deleted cert from {cert_folder}")
         except (FileNotFoundError, OSError) as err:
             logger.debug(f"[REMOVE] Cert not in {cert_folder}: {err}")
+
+        try:
+            os.rmdir(cert_folder)
+            logger.info(f"[REMOVE] Deleted dir {cert_folder}")
+        except OSError:
+            pass  # flat official folder or non-empty — skip
 
     # 4. Remove metadata
     AccountMeta().remove(login)

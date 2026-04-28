@@ -154,6 +154,8 @@ class Haapi:
             raise ShieldRecoveryRequired(self.login)
         if response.status_code == 401:
             raise SessionExpired(self.login)
+        if response.status_code == 500 and certif is not None:
+            raise ShieldRecoveryRequired(self.login)
         response.raise_for_status()
         body = response.json()
         return body["token"]

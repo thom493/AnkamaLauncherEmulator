@@ -71,9 +71,11 @@ class AccountCard(CardWidget):
         all_interface: dict[str, tuple[str, str]],
         proxy_store: ProxyStore,
         parent=None,
+        is_official: bool = False,
     ):
         super().__init__(parent)
         self.login = login
+        self._is_official = is_official
         self._proxy_store = proxy_store
         self._current_pid: int | None = None
         self._last_proxy_url: str | None = self._proxy_store.get_proxy_url(login)
@@ -200,6 +202,7 @@ class AccountCard(CardWidget):
             "}"
         )
         self._remove_btn.clicked.connect(self.remove_requested.emit)
+        self._remove_btn.setVisible(not self._is_official)
         layout.addWidget(self._remove_btn, 0, 6)
         layout.setColumnStretch(0, 2)
         layout.setColumnStretch(1, 1)

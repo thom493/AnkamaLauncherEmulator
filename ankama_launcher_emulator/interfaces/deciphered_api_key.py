@@ -1,4 +1,4 @@
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from ankama_launcher_emulator.interfaces.deciphered_cert import (
     DecipheredCertifDatas,
@@ -19,3 +19,4 @@ class DecipheredApiKeyDatas(TypedDict):
 class DecipheredApiKey(TypedDict):
     apikeyFile: str
     apikey: DecipheredApiKeyDatas
+    is_official: NotRequired[bool]

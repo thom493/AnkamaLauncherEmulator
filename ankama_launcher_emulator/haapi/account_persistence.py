@@ -114,7 +114,9 @@ def list_all_api_keys() -> list:
             logger.warning(f"[LOAD] Skip {login}: get_crypto_context failed: {err!r}")
             continue
         try:
-            results.append(CryptoHelper.getStoredApiKey(login, key_folder, uuid_active))
+            acc = CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)
+            acc["is_official"] = False
+            results.append(acc)
             seen.add(login)
         except StopIteration:
             try:
@@ -132,6 +134,7 @@ def list_all_api_keys() -> list:
         for acc in CryptoHelper.getStoredApiKeys(API_KEY_FOLDER_PATH, Device.getUUID()):
             login = acc["apikey"]["login"]
             if login not in seen:
+                acc["is_official"] = True
                 results.append(acc)
                 seen.add(login)
     except (FileNotFoundError, OSError) as err:
