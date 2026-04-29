@@ -109,8 +109,12 @@ class MainWindow(QMainWindow):
         self._cards: list[AccountCard] = []
         self._launch_contexts: dict[str, dict[str, object]] = {}
         self._current_game_is_dofus3: bool = self._load_initial_game_selection()
-        self._is_refreshing = False
+        self._is_refreshing_accounts = False
+        self._is_refreshing_interfaces = False
+        self._refresh_generation = 0
         self._bootstrap_loading = bootstrap_loading
+        self._bootstrap_accounts_done = not bootstrap_loading
+        self._bootstrap_interfaces_done = not bootstrap_loading
         server_handler = getattr(self._server, "handler", None)
         if server_handler is not None:
             server_handler.on_shield_recovery = self._on_server_shield_recovery
@@ -373,6 +377,18 @@ class MainWindow(QMainWindow):
 
     def start_initial_refresh(self) -> None:
         QTimer.singleShot(0, self._schedule_refresh)
+
+    def _next_refresh_generation(self) -> int:
+        self._refresh_generation += 1
+        return self._refresh_generation
+
+    def _finish_bootstrap_accounts(self) -> None:
+        self._bootstrap_accounts_done = True
+        self._bootstrap_loading = False
+        self._sync_empty_state()
+
+    def _finish_bootstrap_interfaces(self) -> None:
+        self._bootstrap_interfaces_done = True
 
     def _update_empty_state_message(self) -> None:
         if self._bootstrap_loading:
@@ -948,38 +964,66 @@ class MainWindow(QMainWindow):
         self._refresh_timer.start()
 
     def _schedule_refresh(self) -> None:
-        if self._is_refreshing:
-            return
-        self._is_refreshing = True
+        generation = self._next_refresh_generation()
+        self._schedule_accounts_refresh(generation)
+        self._schedule_interfaces_refresh(generation)
 
-        def fetch(_on_progress: Callable) -> tuple:
+    def _schedule_accounts_refresh(self, generation: int) -> None:
+        if self._is_refreshing_accounts:
+            return
+        self._is_refreshing_accounts = True
+
+        def fetch_accounts(_on_progress: Callable) -> list:
             from ankama_launcher_emulator.haapi.account_persistence import (
                 list_all_api_keys,
             )
 
-            return list_all_api_keys(), get_available_network_interfaces()
+            return list_all_api_keys()
 
         def on_success(result: object) -> None:
-            accounts, interfaces = cast(tuple, result)
-            self._apply_refresh(accounts, interfaces)
+            self._apply_accounts_refresh(cast(list, result), generation)
 
         def on_error(_: object) -> None:
-            self._is_refreshing = False
-            self._bootstrap_loading = False
-            self._sync_empty_state()
+            self._is_refreshing_accounts = False
+            if not self._bootstrap_accounts_done:
+                self._finish_bootstrap_accounts()
 
         run_in_background(
-            fetch,
+            fetch_accounts,
             on_success=on_success,
             on_error=on_error,
             parent=self,
         )
 
-    def _apply_refresh(
-        self, new_accounts: list, new_interfaces: dict[str, tuple[str, str]]
-    ) -> None:
-        self._is_refreshing = False
-        self._bootstrap_loading = False
+    def _schedule_interfaces_refresh(self, generation: int) -> None:
+        if self._is_refreshing_interfaces:
+            return
+        self._is_refreshing_interfaces = True
+
+        def fetch_interfaces(_on_progress: Callable) -> dict[str, tuple[str, str]]:
+            return get_available_network_interfaces()
+
+        def on_success(result: object) -> None:
+            self._apply_interfaces_refresh(
+                cast(dict[str, tuple[str, str]], result), generation
+            )
+
+        def on_error(_: object) -> None:
+            self._is_refreshing_interfaces = False
+            if not self._bootstrap_interfaces_done:
+                self._finish_bootstrap_interfaces()
+
+        run_in_background(
+            fetch_interfaces,
+            on_success=on_success,
+            on_error=on_error,
+            parent=self,
+        )
+
+    def _apply_accounts_refresh(self, new_accounts: list, generation: int) -> None:
+        self._is_refreshing_accounts = False
+        if generation != self._refresh_generation:
+            return
 
         current_logins: set[str] = {acc["apikey"]["login"] for acc in self._accounts}
         new_logins: set[str] = {acc["apikey"]["login"] for acc in new_accounts}
@@ -988,7 +1032,7 @@ class MainWindow(QMainWindow):
             for account in new_accounts:
                 login = account["apikey"]["login"]
                 if login not in current_logins:
-                    self._add_card(account, new_interfaces)
+                    self._add_card(account, self._interfaces)
 
             for login in current_logins - new_logins:
                 for card in self._cards[:]:
@@ -999,11 +1043,17 @@ class MainWindow(QMainWindow):
                         self._cards.remove(card)
 
             self._accounts = new_accounts
-            self._sync_empty_state()
+        self._finish_bootstrap_accounts()
 
+    def _apply_interfaces_refresh(
+        self, new_interfaces: dict[str, tuple[str, str]], generation: int
+    ) -> None:
+        self._is_refreshing_interfaces = False
+        if generation != self._refresh_generation:
+            return
         if new_interfaces != self._interfaces:
-            for card in self._cards:
-                card.update_interfaces(new_interfaces)
             self._interfaces = new_interfaces
-        if current_logins == new_logins:
-            self._sync_empty_state()
+            for card in self._cards:
+                card.update_interfaces(self._interfaces)
+        if not self._bootstrap_interfaces_done:
+            self._finish_bootstrap_interfaces()

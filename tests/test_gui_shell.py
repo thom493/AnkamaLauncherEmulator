@@ -143,9 +143,14 @@ class GuiShellTests(unittest.TestCase):
             self.assertEqual(window._cards, [])
             self.assertEqual(window._interfaces, {})
 
-            window._apply_refresh(
+            window._refresh_generation = 1
+            window._apply_accounts_refresh(
                 [{"apikey": {"login": "demo@example.com"}}],
+                1,
+            )
+            window._apply_interfaces_refresh(
                 {"10.0.0.2": ("Fiber", "203.0.113.10")},
+                1,
             )
 
             self.assertFalse(window._bootstrap_loading)
@@ -157,6 +162,34 @@ class GuiShellTests(unittest.TestCase):
                 window._interfaces, {"10.0.0.2": ("Fiber", "203.0.113.10")}
             )
             self.assertEqual(window._cards[0]._ip_combo.count(), 2)
+
+    def test_main_window_interfaces_first_still_populates_new_cards(self):
+        with patch(
+            "ankama_launcher_emulator.gui.account_card.has_active_credentials",
+            return_value=True,
+        ):
+            window = MainWindow(
+                cast(AnkamaLauncherServer, _DummyServer()),
+                [],
+                {},
+                bootstrap_loading=True,
+            )
+
+            window._refresh_generation = 1
+            window._apply_interfaces_refresh(
+                {"10.0.0.2": ("Fiber", "203.0.113.10")},
+                1,
+            )
+            window._apply_accounts_refresh(
+                [{"apikey": {"login": "demo@example.com"}}],
+                1,
+            )
+
+            self.assertEqual(len(window._cards), 1)
+            self.assertEqual(window._cards[0]._ip_combo.count(), 2)
+            self.assertEqual(
+                window._interfaces, {"10.0.0.2": ("Fiber", "203.0.113.10")}
+            )
 
     @patch("ankama_launcher_emulator.gui.main_window.QTimer.singleShot")
     def test_main_window_start_initial_refresh_schedules_background_fetch(
@@ -178,7 +211,25 @@ class GuiShellTests(unittest.TestCase):
         self.assertEqual(getattr(callback, "__name__", ""), "_schedule_refresh")
 
     @patch("ankama_launcher_emulator.gui.main_window.run_in_background")
-    def test_main_window_refresh_error_clears_bootstrap_loading(
+    def test_main_window_schedule_refresh_starts_both_workers(
+        self, run_in_background
+    ):
+        window = MainWindow(
+            cast(AnkamaLauncherServer, _DummyServer()),
+            [],
+            {},
+            bootstrap_loading=True,
+        )
+
+        window._schedule_refresh()
+
+        self.assertEqual(run_in_background.call_count, 2)
+        self.assertTrue(window._is_refreshing_accounts)
+        self.assertTrue(window._is_refreshing_interfaces)
+        self.assertEqual(window._refresh_generation, 1)
+
+    @patch("ankama_launcher_emulator.gui.main_window.run_in_background")
+    def test_main_window_account_refresh_error_clears_bootstrap_loading(
         self, run_in_background
     ):
         window = MainWindow(
@@ -195,11 +246,26 @@ class GuiShellTests(unittest.TestCase):
 
         run_in_background.side_effect = fail_fetch
 
-        window._schedule_refresh()
+        window._schedule_accounts_refresh(1)
 
-        self.assertFalse(window._is_refreshing)
+        self.assertFalse(window._is_refreshing_accounts)
         self.assertFalse(window._bootstrap_loading)
         self.assertIn("No account found", window._empty_state_label.text())
+
+    def test_main_window_discards_stale_interface_results(self):
+        window = MainWindow(
+            cast(AnkamaLauncherServer, _DummyServer()),
+            [],
+            {},
+        )
+
+        window._refresh_generation = 2
+        window._interfaces = {"10.0.0.5": ("Old", "198.51.100.5")}
+        window._apply_interfaces_refresh({"10.0.0.2": ("New", "203.0.113.10")}, 1)
+
+        self.assertEqual(
+            window._interfaces, {"10.0.0.5": ("Old", "198.51.100.5")}
+        )
 
     def test_download_banner_hides_when_idle_and_tracks_progress(self):
         banner = DownloadBanner()
