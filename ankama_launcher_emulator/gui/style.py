@@ -1,6 +1,15 @@
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QDialog
 
-from ankama_launcher_emulator.gui.consts import PANEL_ALT_HEXA, TEXT_HEXA
+from ankama_launcher_emulator.gui.consts import (
+    APP_BG_HEXA,
+    BORDER_HEXA,
+    ORANGE_HEXA,
+    PANEL_ALT_HEXA,
+    PANEL_BG_HEXA,
+    TEXT_HEXA,
+    TEXT_MUTED_HEXA,
+    TEXT_SOFT_HEXA,
+)
 
 
 _APP_STYLE_MARKER = "/* AnkAlt shared control style */"
@@ -48,3 +57,44 @@ def apply_app_style(app: QApplication) -> None:
 
     separator = "\n" if current else ""
     app.setStyleSheet(f"{current}{separator}{APP_CONTROL_STYLESHEET}")
+
+
+def compact_secondary_button_style(kind: str = "PushButton") -> str:
+    return (
+        f"{kind} {{"
+        f"background-color: {PANEL_ALT_HEXA};"
+        f"border: 1px solid {BORDER_HEXA};"
+        "border-radius: 14px;"
+        "padding: 2px 10px;"
+        f"color: {TEXT_HEXA};"
+        "}"
+        f"{kind}:hover {{ border-color: {ORANGE_HEXA}; }}"
+    )
+
+
+def dialog_section_style() -> str:
+    return (
+        "CardWidget#dialogSection {"
+        f"background-color: {PANEL_BG_HEXA};"
+        f"border: 1px solid {BORDER_HEXA};"
+        "border-radius: 16px;"
+        "}"
+    )
+
+
+def apply_dark_dialog_style(dialog: QDialog) -> None:
+    dialog.setStyleSheet(
+        "QDialog {"
+        f"background-color: {APP_BG_HEXA};"
+        "}"
+        f"QDialog BodyLabel {{ color: {TEXT_SOFT_HEXA}; }}"
+        f"QDialog CaptionLabel {{ color: {TEXT_MUTED_HEXA}; }}"
+        f"QDialog LineEdit, QDialog PasswordLineEdit, QDialog ComboBox {{"
+        f"background-color: {PANEL_ALT_HEXA};"
+        f"border: 1px solid {BORDER_HEXA};"
+        "border-radius: 14px;"
+        "padding: 2px 10px;"
+        "}"
+        f"QDialog PushButton, QDialog PrimaryPushButton {{ color: {TEXT_HEXA}; }}"
+        f"{dialog_section_style()}"
+    )

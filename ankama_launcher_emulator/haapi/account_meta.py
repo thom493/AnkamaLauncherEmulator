@@ -111,6 +111,37 @@ class AccountMeta:
         if portable:
             self.generate_fake_profile(login)
 
+    def set_imported_portable_profile(
+        self,
+        login: str,
+        *,
+        alias: str | None,
+        fake_uuid: str,
+        fake_hm1: str,
+        fake_hm2: str,
+        fake_hostname: str,
+        proxy_url: str | None,
+        cert_validated_proxy_url: str | None,
+    ) -> None:
+        entry = self._data.get(login, {})
+        entry["source"] = "managed"
+        if alias is not None:
+            entry["alias"] = alias
+        if "added_at" not in entry:
+            entry["added_at"] = datetime.now().isoformat()
+        entry["portable_mode"] = True
+        entry["fake_uuid"] = fake_uuid
+        entry["fake_hm1"] = fake_hm1
+        entry["fake_hm2"] = fake_hm2
+        entry["fake_hostname"] = fake_hostname
+        entry["proxy_url"] = proxy_url
+        if cert_validated_proxy_url is not None:
+            entry["cert_validated_proxy_url"] = cert_validated_proxy_url
+        else:
+            entry.pop("cert_validated_proxy_url", None)
+        self._data[login] = entry
+        self._save()
+
     def set_proxy(self, login: str, proxy_url: str | None) -> None:
         entry = self._data.get(login, {})
         entry["proxy_url"] = proxy_url

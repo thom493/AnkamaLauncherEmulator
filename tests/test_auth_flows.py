@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from unittest.mock import ANY, MagicMock, call, patch
 
 import requests
@@ -13,10 +14,20 @@ from PyQt6.QtWidgets import QDialog
 from ankama_launcher_emulator.gui.add_account_dialog import AddAccountDialog
 from ankama_launcher_emulator.gui.app import ensure_app
 from ankama_launcher_emulator.gui.main_window import MainWindow
+from ankama_launcher_emulator.gui.portable_account_dialogs import (
+    PortableAccountImportDialog,
+)
 from ankama_launcher_emulator.haapi.haapi import Haapi
+from ankama_launcher_emulator.haapi.portable_exchange import (
+    PortableExchangeConflictError,
+    PortableExchangePassphraseError,
+    export_portable_account,
+    import_portable_account,
+)
 from ankama_launcher_emulator.haapi.shield import ShieldRecoveryRequired
 from ankama_launcher_emulator.interfaces.account_game_info import AccountGameInfo
 from ankama_launcher_emulator.server.handler import AnkamaLauncherHandler
+from ankama_launcher_emulator.utils.proxy_store import ProxyStore
 
 
 class _DummyServer:
@@ -179,6 +190,252 @@ class AuthFlowTests(unittest.TestCase):
             "ankama_launcher_emulator.gui.embedded_auth_browser_dialog"
         )
         self.assertIs(dialog_class, module.EmbeddedAuthBrowserDialog)
+
+    def _portable_env(self, root: str) -> ExitStack:
+        from ankama_launcher_emulator import consts
+        from ankama_launcher_emulator.haapi import account_meta, portable_exchange
+        from ankama_launcher_emulator.utils import proxy_store
+
+        stack = ExitStack()
+        paths = {
+            "API_KEY_FOLDER_PATH": os.path.join(root, "official_keydata"),
+            "CERTIFICATE_FOLDER_PATH": os.path.join(root, "official_cert"),
+            "ALT_API_KEY_FOLDER_PATH": os.path.join(root, "portable_keydata"),
+            "ALT_CERTIFICATE_FOLDER_PATH": os.path.join(root, "portable_cert"),
+        }
+        for path in paths.values():
+            os.makedirs(path, exist_ok=True)
+
+        stack.enter_context(patch.object(consts, "API_KEY_FOLDER_PATH", paths["API_KEY_FOLDER_PATH"]))
+        stack.enter_context(patch.object(consts, "CERTIFICATE_FOLDER_PATH", paths["CERTIFICATE_FOLDER_PATH"]))
+        stack.enter_context(patch.object(consts, "ALT_API_KEY_FOLDER_PATH", paths["ALT_API_KEY_FOLDER_PATH"]))
+        stack.enter_context(patch.object(consts, "ALT_CERTIFICATE_FOLDER_PATH", paths["ALT_CERTIFICATE_FOLDER_PATH"]))
+        stack.enter_context(
+            patch.object(
+                portable_exchange,
+                "API_KEY_FOLDER_PATH",
+                paths["API_KEY_FOLDER_PATH"],
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                portable_exchange,
+                "ALT_API_KEY_FOLDER_PATH",
+                paths["ALT_API_KEY_FOLDER_PATH"],
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                portable_exchange,
+                "ALT_CERTIFICATE_FOLDER_PATH",
+                paths["ALT_CERTIFICATE_FOLDER_PATH"],
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                account_meta,
+                "META_PATH",
+                os.path.join(root, "account_meta.json"),
+            )
+        )
+        stack.enter_context(
+            patch.object(
+                proxy_store,
+                "PROXY_STORE_PATH",
+                os.path.join(root, "proxies.json"),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "ankama_launcher_emulator.haapi.portable_exchange.Device.getUUID",
+                return_value="official-uuid",
+            )
+        )
+        return stack
+
+    def test_portable_account_export_import_roundtrip_restores_launch_material(self):
+        from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
+        from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+        login = "demo@example.com"
+        account_id = 7
+        fake_uuid = "fake-uuid-123"
+        fake_hm1 = "a" * 32
+        fake_hm2 = fake_hm1[::-1]
+        fake_hostname = "DESKTOP-PORT7"
+        export_path = os.path.join(tempfile.gettempdir(), "portable-roundtrip.ankalt-account")
+
+        with tempfile.TemporaryDirectory() as source_root:
+            with self._portable_env(source_root):
+                meta = AccountMeta()
+                meta.set_imported_portable_profile(
+                    login,
+                    alias="Demo",
+                    fake_uuid=fake_uuid,
+                    fake_hm1=fake_hm1,
+                    fake_hm2=fake_hm2,
+                    fake_hostname=fake_hostname,
+                    proxy_url="socks5://127.0.0.1:9050",
+                    cert_validated_proxy_url="socks5://127.0.0.1:9050",
+                )
+                uuid_active, cert_folder, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+                cert_hash = CryptoHelper.createHashFromStringSha(login)
+                CryptoHelper.encryptToFile(
+                    os.path.join(key_folder, f".key{cert_hash}"),
+                    {
+                        "key": "access-token",
+                        "provider": "ankama",
+                        "refreshToken": "refresh-token",
+                        "isStayLoggedIn": True,
+                        "accountId": account_id,
+                        "login": login,
+                        "refreshDate": 1234567890,
+                    },
+                    uuid_active,
+                )
+                CryptoHelper.encryptToFile(
+                    os.path.join(cert_folder, f".certif{cert_hash}"),
+                    {"id": 42, "encodedCertificate": "abc", "login": login},
+                    uuid_active,
+                )
+                proxy_store = ProxyStore()
+                proxy_id = proxy_store.add_proxy("Portable Proxy", "socks5://127.0.0.1:9050")
+                proxy_store.assign_proxy(login, proxy_id)
+
+                export_portable_account(login, "hunter2", export_path, proxy_store)
+
+        with tempfile.TemporaryDirectory() as target_root:
+            with self._portable_env(target_root):
+                proxy_store = ProxyStore()
+                imported_login = import_portable_account(
+                    export_path, "hunter2", proxy_store
+                )
+                self.assertEqual(imported_login, login)
+
+                meta = AccountMeta()
+                entry = meta.get(login)
+                assert entry is not None
+                self.assertTrue(entry["portable_mode"])
+                self.assertEqual(entry["fake_uuid"], fake_uuid)
+                self.assertEqual(entry["fake_hm1"], fake_hm1)
+                self.assertEqual(entry["fake_hm2"], fake_hm2)
+                self.assertEqual(entry["fake_hostname"], fake_hostname)
+                self.assertEqual(entry["proxy_url"], "socks5://127.0.0.1:9050")
+                self.assertEqual(
+                    entry["cert_validated_proxy_url"], "socks5://127.0.0.1:9050"
+                )
+
+                uuid_active, cert_folder, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+                stored_key = CryptoHelper.getStoredApiKey(login, key_folder, uuid_active)
+                self.assertEqual(stored_key["apikey"]["accountId"], account_id)
+                stored_cert = CryptoHelper.getStoredCertificate(
+                    login, cert_folder, uuid_active
+                )["certificate"]
+                self.assertEqual(stored_cert["id"], 42)
+                self.assertEqual(proxy_store.get_proxy_url(login), "socks5://127.0.0.1:9050")
+
+        if os.path.exists(export_path):
+            os.unlink(export_path)
+
+    def test_import_portable_account_rejects_wrong_passphrase(self):
+        login = "demo@example.com"
+        export_path = os.path.join(tempfile.gettempdir(), "portable-wrong-pass.ankalt-account")
+        with tempfile.TemporaryDirectory() as source_root:
+            with self._portable_env(source_root):
+                from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
+                from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+                meta = AccountMeta()
+                meta.set_imported_portable_profile(
+                    login,
+                    alias=None,
+                    fake_uuid="fake-uuid-123",
+                    fake_hm1="b" * 32,
+                    fake_hm2="b" * 32,
+                    fake_hostname="DESKTOP-FAIL1",
+                    proxy_url=None,
+                    cert_validated_proxy_url=None,
+                )
+                uuid_active, _, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+                cert_hash = CryptoHelper.createHashFromStringSha(login)
+                CryptoHelper.encryptToFile(
+                    os.path.join(key_folder, f".key{cert_hash}"),
+                    {
+                        "key": "access-token",
+                        "provider": "ankama",
+                        "refreshToken": "",
+                        "isStayLoggedIn": True,
+                        "accountId": 9,
+                        "login": login,
+                        "refreshDate": 1,
+                    },
+                    uuid_active,
+                )
+                export_portable_account(login, "hunter2", export_path, ProxyStore())
+
+        with tempfile.TemporaryDirectory() as target_root:
+            with self._portable_env(target_root):
+                with self.assertRaises(PortableExchangePassphraseError):
+                    import_portable_account(export_path, "wrong-pass", ProxyStore())
+
+        if os.path.exists(export_path):
+            os.unlink(export_path)
+
+    def test_import_portable_account_blocks_duplicate_login(self):
+        login = "demo@example.com"
+        export_path = os.path.join(tempfile.gettempdir(), "portable-duplicate.ankalt-account")
+        with tempfile.TemporaryDirectory() as source_root:
+            with self._portable_env(source_root):
+                from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
+                from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+                meta = AccountMeta()
+                meta.set_imported_portable_profile(
+                    login,
+                    alias=None,
+                    fake_uuid="fake-uuid-123",
+                    fake_hm1="c" * 32,
+                    fake_hm2="c" * 32,
+                    fake_hostname="DESKTOP-DUP11",
+                    proxy_url=None,
+                    cert_validated_proxy_url=None,
+                )
+                uuid_active, _, key_folder, _, _ = CryptoHelper.get_crypto_context(login)
+                cert_hash = CryptoHelper.createHashFromStringSha(login)
+                CryptoHelper.encryptToFile(
+                    os.path.join(key_folder, f".key{cert_hash}"),
+                    {
+                        "key": "access-token",
+                        "provider": "ankama",
+                        "refreshToken": "",
+                        "isStayLoggedIn": True,
+                        "accountId": 9,
+                        "login": login,
+                        "refreshDate": 1,
+                    },
+                    uuid_active,
+                )
+                export_portable_account(login, "hunter2", export_path, ProxyStore())
+
+        with tempfile.TemporaryDirectory() as target_root:
+            with self._portable_env(target_root):
+                from ankama_launcher_emulator.haapi.account_meta import AccountMeta
+
+                AccountMeta().set_imported_portable_profile(
+                    login,
+                    alias="Existing",
+                    fake_uuid="existing-uuid",
+                    fake_hm1="d" * 32,
+                    fake_hm2="d" * 32,
+                    fake_hostname="DESKTOP-EXIST1",
+                    proxy_url=None,
+                    cert_validated_proxy_url=None,
+                )
+                with self.assertRaises(PortableExchangeConflictError):
+                    import_portable_account(export_path, "hunter2", ProxyStore())
+
+        if os.path.exists(export_path):
+            os.unlink(export_path)
 
     @unittest.skipUnless(sys.platform == "win32", "Device.getUUID/getOsVersion are Windows-only")
     @patch("ankama_launcher_emulator.gui.add_account_dialog.persist_managed_account")
@@ -752,21 +1009,68 @@ class AuthFlowTests(unittest.TestCase):
         self.assertTrue(official.get("is_official", False), "official Zaap account must be is_official")
 
     @_patch_credentials
-    def test_official_account_card_hides_remove_button(self, _creds):
-        """P5: AccountCard with is_official=True hides the X remove button."""
+    def test_official_account_card_hides_manage_button(self, _creds):
+        """P5: AccountCard with is_official=True hides the manage button."""
         from ankama_launcher_emulator.gui.account_card import AccountCard
 
         card = AccountCard("official@test.com", {}, _ProxyStore(), is_official=True)
-        self.assertFalse(card._remove_btn.isVisible())
+        self.assertFalse(card._manage_btn.isVisible())
 
     @_patch_credentials
-    def test_managed_account_card_shows_remove_button(self, _creds):
-        """P5: AccountCard with is_official=False (default) shows the X remove button."""
+    def test_managed_account_card_shows_manage_button(self, _creds):
+        """P5: AccountCard with is_official=False shows manage button."""
         from ankama_launcher_emulator.gui.account_card import AccountCard
 
         card = AccountCard("managed@test.com", {}, _ProxyStore(), is_official=False)
         # isVisibleTo checks "would be visible if parent were shown" — parent-agnostic
-        self.assertTrue(card._remove_btn.isVisibleTo(card))
+        self.assertTrue(card._manage_btn.isVisibleTo(card))
+
+    @patch(
+        "ankama_launcher_emulator.gui.portable_account_dialogs.inspect_portable_account"
+    )
+    def test_portable_import_dialog_previews_before_enabling_import(
+        self, inspect_portable_account_mock
+    ):
+        inspect_portable_account_mock.return_value = {
+            "version": 1,
+            "exported_at": "2026-01-01T00:00:00",
+            "app_version": "0.1.0",
+            "login": "demo@example.com",
+            "account_id": 7,
+            "alias": "Demo",
+            "portable_mode": True,
+            "fake_uuid": "uuid",
+            "fake_hm1": "a" * 32,
+            "fake_hm2": "b" * 32,
+            "fake_hostname": "DESKTOP-DEMO1",
+            "proxy_url": "socks5://127.0.0.1:9050",
+            "cert_validated_proxy_url": "socks5://127.0.0.1:9050",
+            "keydata": {
+                "key": "access-token",
+                "provider": "ankama",
+                "refreshToken": "",
+                "isStayLoggedIn": True,
+                "accountId": 7,
+                "login": "demo@example.com",
+                "refreshDate": 1,
+            },
+            "certificate": {"id": 42, "encodedCertificate": "abc", "login": "demo@example.com"},
+        }
+
+        dialog = PortableAccountImportDialog()
+        dialog._path_input.setText("/tmp/demo.ankalt-account")
+        dialog._passphrase_input.setText("hunter2")
+
+        self.assertFalse(dialog._import_btn.isEnabled())
+
+        dialog._on_preview()
+
+        inspect_portable_account_mock.assert_called_once_with(
+            "/tmp/demo.ankalt-account", "hunter2"
+        )
+        self.assertTrue(dialog._import_btn.isEnabled())
+        self.assertEqual(dialog._preview_login.text(), "demo@example.com")
+        self.assertEqual(dialog._preview_alias.text(), "Demo")
 
     @_patch_credentials
     def test_remove_account_blocked_for_official_accounts(self, _creds):

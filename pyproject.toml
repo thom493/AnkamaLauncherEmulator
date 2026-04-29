@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ankama_launcher_emulator"
-version = "0.1.0"
+version = "0.5.0"
 description = ""
 authors = [{ name = "Valentin Alix", email = "valentin-alix.850@outlook.fr" }]
 requires-python = ">=3.12"

@@ -5,13 +5,17 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QGridLayout, QLabel, QVBoxLayout
 from qfluentwidgets import (
+    Action,
     BodyLabel,
     CaptionLabel,
     CardWidget,
     ComboBox,
+    FluentIcon,
     PrimaryPushButton,
     PushButton,
+    RoundMenu,
     SwitchButton,
+    TransparentToolButton,
 )
 
 from ankama_launcher_emulator.decrypter.crypto_helper import CryptoHelper
@@ -61,6 +65,7 @@ class AccountCard(CardWidget):
     launch_requested = pyqtSignal(
         object, object
     )  # (interface_ip: str | None, proxy_id: str | None)
+    export_requested = pyqtSignal(str)  # login
     remove_requested = pyqtSignal()
     error_occurred = pyqtSignal(str)
     reconnect_requested = pyqtSignal(str)  # login
@@ -108,7 +113,7 @@ class AccountCard(CardWidget):
             "}"
             f"AccountCard CaptionLabel {{ color: {TEXT_MUTED_HEXA}; }}"
             f"AccountCard ComboBox {{ background-color: {PANEL_ALT_HEXA}; border-radius: 14px; padding: 2px 10px; }}"
-            "AccountCard PushButton, AccountCard PrimaryPushButton { border-radius: 14px; padding: 2px 10px; }"
+            "AccountCard PushButton, AccountCard PrimaryPushButton, AccountCard TransparentToolButton { border-radius: 14px; padding: 2px 10px; }"
         )
 
         self._login_label = BodyLabel(self.login)
@@ -190,20 +195,24 @@ class AccountCard(CardWidget):
         layout.addWidget(self._launch_btn, 0, 5)
         self._refresh_launch_button()
 
-        self._remove_btn = PushButton("X")
-        self._remove_btn.setFixedSize(28, 28)
-        self._remove_btn.setStyleSheet(
-            "PushButton {"
+        self._manage_btn = TransparentToolButton(parent=self)
+        self._manage_btn.setIcon(FluentIcon.MORE.icon())
+        self._manage_btn.setFixedSize(28, 28)
+        self._manage_btn.setStyleSheet(
+            "TransparentToolButton {"
             f"background-color: {PANEL_ALT_HEXA};"
             f"border: 1px solid {BORDER_HEXA};"
             "border-radius: 14px;"
             "padding: 0;"
             f"color: {TEXT_HEXA};"
             "}"
+            "TransparentToolButton:hover {"
+            f"border-color: {ORANGE_HEXA};"
+            "}"
         )
-        self._remove_btn.clicked.connect(self.remove_requested.emit)
-        self._remove_btn.setVisible(not self._is_official)
-        layout.addWidget(self._remove_btn, 0, 6)
+        self._manage_btn.clicked.connect(self._open_manage_menu)
+        self._manage_btn.setVisible(not self._is_official)
+        layout.addWidget(self._manage_btn, 0, 6)
         layout.setColumnStretch(0, 2)
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(2, 1)
@@ -318,6 +327,20 @@ class AccountCard(CardWidget):
         else:
             self._launch_btn.setDisabled(True)
             self.reconnect_requested.emit(self.login)
+
+    def _open_manage_menu(self) -> None:
+        menu = RoundMenu(parent=self)
+        portable = bool((AccountMeta().get(self.login) or {}).get("portable_mode"))
+        export_action = Action(FluentIcon.SHARE, "Export Portable Account", self)
+        export_action.setEnabled(portable)
+        export_action.triggered.connect(
+            lambda checked=False: self.export_requested.emit(self.login)
+        )
+        remove_action = Action(FluentIcon.DELETE, "Remove Account", self)
+        remove_action.triggered.connect(self.remove_requested.emit)
+        menu.addAction(export_action)
+        menu.addAction(remove_action)
+        menu.exec(self._manage_btn.mapToGlobal(self._manage_btn.rect().bottomLeft()))
 
     def _on_launch_clicked(self) -> None:
         interface_ip = self._ip_combo.currentData() or None

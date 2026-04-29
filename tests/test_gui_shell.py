@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, call, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
+from qfluentwidgets import PushButton
 
 from ankama_launcher_emulator.gui.account_card import AccountCard
 from ankama_launcher_emulator.gui.download_banner import DownloadBanner
@@ -127,6 +128,25 @@ class GuiShellTests(unittest.TestCase):
         self.assertEqual(window._empty_state_card.objectName(), "emptyStateCard")
         self.assertIn("No account found", window._empty_state_label.text())
         self.assertTrue(window._empty_state_card.isVisible())
+
+    def test_main_window_exposes_import_and_export_actions(self):
+        with patch(
+            "ankama_launcher_emulator.gui.account_card.has_active_credentials",
+            return_value=True,
+        ):
+            window = MainWindow(
+                cast(AnkamaLauncherServer, _DummyServer()),
+                [{"apikey": {"login": "demo@example.com"}}],
+                {},
+            )
+        buttons = {
+            widget.text()
+            for widget in window.findChildren(PushButton)
+        }
+        self.assertIn("Import", buttons)
+        self.assertNotIn("Export", buttons)
+        self.assertIn("Add Account", buttons)
+        self.assertTrue(hasattr(window._cards[0], "_manage_btn"))
 
     def test_main_window_initial_refresh_updates_accounts_and_interfaces(self):
         with patch(

@@ -62,6 +62,10 @@ from ankama_launcher_emulator.haapi.account_meta import AccountMeta
 from ankama_launcher_emulator.haapi.account_persistence import (
     persist_managed_account,
 )
+from ankama_launcher_emulator.haapi.portable_exchange import (
+    export_portable_account,
+    import_portable_account,
+)
 from ankama_launcher_emulator.haapi.pkce_auth import ZaapPkceSession
 from ankama_launcher_emulator.haapi.shield import (
     request_security_code,
@@ -259,6 +263,13 @@ class MainWindow(QMainWindow):
         gear_btn.clicked.connect(self._open_proxy_dialog)
         action_row.addWidget(gear_btn)
 
+        import_btn = PushButton("Import")
+        import_btn.setFixedWidth(100)
+        import_btn.setFixedHeight(28)
+        import_btn.setStyleSheet(gear_btn.styleSheet())
+        import_btn.clicked.connect(self._open_import_account_dialog)
+        action_row.addWidget(import_btn)
+
         add_btn = PushButton("Add Account")
         add_btn.setFixedWidth(124)
         add_btn.setFixedHeight(28)
@@ -356,6 +367,7 @@ class MainWindow(QMainWindow):
         )
         self._cards.append(card)
         card.launch_requested.connect(self._make_launch_handler(login, card))
+        card.export_requested.connect(self._open_export_account_dialog)
         card.remove_requested.connect(
             lambda l=login, c=card: self._on_remove_account(l, c)
         )
@@ -942,6 +954,93 @@ class MainWindow(QMainWindow):
 
         dialog.finished.connect(_on_finished)
         dialog.show()
+
+    def _open_export_account_dialog(self, login: str | None = None) -> None:
+        from ankama_launcher_emulator.gui.portable_account_dialogs import (
+            PortableAccountExportDialog,
+        )
+
+        meta = AccountMeta()
+        if not login:
+            self._show_error("Select a portable account to export.")
+            return
+        entry = meta.get(login)
+        if entry is None:
+            self._show_error("Only managed accounts can be exported.")
+            return
+        if not entry.get("portable_mode"):
+            self._show_error("Enable portable mode before exporting this account.")
+            return
+        uuid_active, cert_folder, _, _, _ = CryptoHelper.get_crypto_context(login)
+        has_certificate = True
+        try:
+            CryptoHelper.getStoredCertificate(login, cert_folder, uuid_active)
+        except (FileNotFoundError, OSError):
+            has_certificate = False
+
+        dialog = PortableAccountExportDialog(
+            login=login,
+            alias=cast(str | None, entry.get("alias")),
+            has_proxy=bool(self._proxy_store.get_proxy_url(login)),
+            has_certificate=has_certificate,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            dialog.deleteLater()
+            return
+
+        output_path = dialog.output_path()
+        passphrase = dialog.passphrase()
+        dialog.deleteLater()
+        self._set_panel_status("Exporting portable account...")
+
+        def task(_on_progress: Callable) -> str:
+            return export_portable_account(
+                login, passphrase, output_path, self._proxy_store
+            )
+
+        def on_success(result: object) -> None:
+            self._set_panel_status("")
+            self._show_success(f"Exported {result}")
+
+        def on_error(err: object) -> None:
+            self._set_panel_status("")
+            self._show_error(str(err))
+
+        run_in_background(task, on_success=on_success, on_error=on_error, parent=self)
+
+    def _open_import_account_dialog(self) -> None:
+        from ankama_launcher_emulator.gui.portable_account_dialogs import (
+            PortableAccountImportDialog,
+        )
+
+        dialog = PortableAccountImportDialog(parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            dialog.deleteLater()
+            return
+
+        input_path = dialog.input_path()
+        passphrase = dialog.passphrase()
+        dialog.deleteLater()
+        self._set_panel_status("Importing portable account...")
+
+        def task(_on_progress: Callable) -> str:
+            return import_portable_account(
+                input_path, passphrase, self._proxy_store
+            )
+
+        def on_success(result: object) -> None:
+            self._set_panel_status("")
+            for card in self._cards:
+                card.update_proxies()
+            self._schedule_refresh()
+            self._show_success(f"Imported {result}")
+
+        def on_error(err: object) -> None:
+            self._set_panel_status("")
+            self._show_error(str(err))
+
+        run_in_background(task, on_success=on_success, on_error=on_error, parent=self)
 
     # --- Info bars ---
 

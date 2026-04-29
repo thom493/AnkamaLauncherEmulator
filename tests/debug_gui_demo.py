@@ -475,8 +475,13 @@ def _install_fakes(stack: ExitStack) -> None:
         from ankama_launcher_emulator.gui import account_card
         from ankama_launcher_emulator.gui import add_account_dialog
         from ankama_launcher_emulator.gui import main_window
+        from ankama_launcher_emulator.gui import portable_account_dialogs
         from ankama_launcher_emulator.gui import proxy_dialog
         from ankama_launcher_emulator.gui.add_account_dialog import AddAccountDialog
+        from ankama_launcher_emulator.gui.portable_account_dialogs import (
+            PortableAccountExportDialog,
+            PortableAccountImportDialog,
+        )
         from ankama_launcher_emulator.gui.proxy_dialog import ProxyDialog
 
     stack.enter_context(patch.object(main_window, "ProxyStore", _DemoProxyStore))
@@ -553,6 +558,85 @@ def _install_fakes(stack: ExitStack) -> None:
             main_window.MainWindow,
             "_open_add_account_dialog",
             fake_open_add_account_dialog,
+        )
+    )
+    def fake_inspect_portable_account(_path: str, _passphrase: str) -> dict:
+        return {
+            "version": 1,
+            "exported_at": "2026-01-01T00:00:00",
+            "app_version": "0.1.0",
+            "login": "ready.alt@example.com",
+            "account_id": 7,
+            "alias": "Cra",
+            "portable_mode": True,
+            "fake_uuid": "demo-uuid",
+            "fake_hm1": "a" * 32,
+            "fake_hm2": "b" * 32,
+            "fake_hostname": "DESKTOP-DEMO1",
+            "proxy_url": _DemoProxyStore._proxies["paris"].url,
+            "cert_validated_proxy_url": _DemoProxyStore._proxies["paris"].url,
+            "keydata": {
+                "key": "access-token",
+                "provider": "ankama",
+                "refreshToken": "refresh-token",
+                "isStayLoggedIn": True,
+                "accountId": 7,
+                "login": "ready.alt@example.com",
+                "refreshDate": 1,
+            },
+            "certificate": {
+                "id": 42,
+                "encodedCertificate": "abc",
+                "login": "ready.alt@example.com",
+            },
+        }
+
+    def fake_open_import_account_dialog(window) -> None:
+        dialog = PortableAccountImportDialog(parent=window)
+        _apply_demo_dialog_style(dialog)
+        dialog._path_input.setText("/tmp/demo-portable-account.ankalt-account")
+        dialog._passphrase_input.setText("demo-passphrase")
+        if (
+            dialog.exec() == dialog.DialogCode.Accepted
+            and dialog.preview_payload()
+        ):
+            window._show_success(
+                f"Demo import ready for {dialog.preview_payload()['login']}"
+            )
+
+    def fake_open_export_account_dialog(window, login: str | None = None) -> None:
+        target_login = login or "ready.alt@example.com"
+        entry = _DemoAccountMeta().get(target_login) or {}
+        dialog = PortableAccountExportDialog(
+            login=target_login,
+            alias=cast(str | None, entry.get("alias")),
+            has_proxy=bool(entry.get("proxy_url")),
+            has_certificate=True,
+            parent=window,
+        )
+        _apply_demo_dialog_style(dialog)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            window._show_success(f"Demo export ready for {target_login}")
+
+    stack.enter_context(
+        patch.object(
+            portable_account_dialogs,
+            "inspect_portable_account",
+            fake_inspect_portable_account,
+        )
+    )
+    stack.enter_context(
+        patch.object(
+            main_window.MainWindow,
+            "_open_import_account_dialog",
+            fake_open_import_account_dialog,
+        )
+    )
+    stack.enter_context(
+        patch.object(
+            main_window.MainWindow,
+            "_open_export_account_dialog",
+            fake_open_export_account_dialog,
         )
     )
     stack.enter_context(
@@ -639,9 +723,17 @@ def _patch_window_dialogs(window) -> None:
         if dialog.exec() == QDialog.DialogCode.Accepted:
             window._show_success(f"Shield code accepted: {dialog.get_code()}")
 
+    def open_import_dialog() -> None:
+        window._open_import_account_dialog()
+
+    def open_export_dialog() -> None:
+        window._open_export_account_dialog("ready.alt@example.com")
+
     window._open_proxy_dialog = open_proxy_dialog
     window._open_add_account_dialog = open_add_account_dialog
     window._open_demo_shield_dialog = open_shield_dialog
+    window._open_demo_import_dialog = open_import_dialog
+    window._open_demo_export_dialog = open_export_dialog
 
 
 class _DemoControls:
@@ -686,6 +778,8 @@ class _DemoControls:
             ("Cycle Download Banner", self._cycle_banner),
             ("Hide Download Banner", lambda: window._set_panel_status("")),
             ("Open Add Account", window._open_add_account_dialog),
+            ("Open Import Dialog", window._open_demo_import_dialog),
+            ("Open Export Dialog", window._open_demo_export_dialog),
             ("Open Proxy Library", window._open_proxy_dialog),
             ("Open Shield Dialog", window._open_demo_shield_dialog),
             ("Fake Launch First Account", self._launch_first_account),
