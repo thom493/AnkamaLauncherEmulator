@@ -23,6 +23,7 @@ from qfluentwidgets import (
 )
 
 from ankama_launcher_emulator.gui.shield_dialog import ShieldCodeDialog
+from ankama_launcher_emulator.gui.style import apply_dark_dialog_style
 from ankama_launcher_emulator.gui.utils import Worker
 from ankama_launcher_emulator.haapi.account_meta import AccountMeta
 from ankama_launcher_emulator.haapi.account_persistence import (
@@ -93,6 +94,7 @@ class AddAccountDialog(QDialog):
         self._workers: list[Worker] = []
         self.setWindowTitle("Reconnect Account" if locked_login else "Add Account")
         self.setMinimumWidth(450)
+        apply_dark_dialog_style(self)
         self._setup_ui()
 
     def _run_worker(self, task, on_success, on_error) -> None:

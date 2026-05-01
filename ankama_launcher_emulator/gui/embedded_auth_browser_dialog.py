@@ -16,6 +16,8 @@ from PyQt6.QtCore import QTimer, QUrl, pyqtSignal
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
 from qfluentwidgets import BodyLabel
 
+from ankama_launcher_emulator.gui.style import apply_dark_dialog_style
+
 logger = logging.getLogger(__name__)
 
 _AUTH_TOKEN_URL = "https://auth.ankama.com/token"
@@ -96,6 +98,7 @@ class EmbeddedAuthBrowserDialog(QDialog):
         # Qt modality state on Windows and freezes the parent window.
         self.setWindowTitle("Authentication")
         self.setMinimumSize(800, 700)
+        apply_dark_dialog_style(self)
         self._auth_code: str | None = None
         self._code_verifier = code_verifier
         self._tokens: dict | None = None

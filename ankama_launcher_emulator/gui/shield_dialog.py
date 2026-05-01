@@ -2,6 +2,8 @@ from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
 from qfluentwidgets import BodyLabel, LineEdit, PrimaryPushButton, PushButton
 
+from ankama_launcher_emulator.gui.style import apply_dark_dialog_style
+
 _MAX_RESEND = 3
 
 
@@ -24,6 +26,7 @@ class ShieldCodeDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Shield Verification")
         self.setMinimumWidth(400)
+        apply_dark_dialog_style(self)
         self._code: str | None = None
         self._resend_count = 0
         self._setup_ui(login, message, placeholder)
