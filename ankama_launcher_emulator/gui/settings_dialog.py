@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+import webbrowser
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -17,6 +18,8 @@ from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
     CardWidget,
+    InfoBar,
+    InfoBarPosition,
     PrimaryPushButton,
     PushButton,
     SwitchButton,
@@ -39,11 +42,14 @@ from ankama_launcher_emulator.gui.consts import (
 from ankama_launcher_emulator.gui.style import apply_dark_dialog_style
 from ankama_launcher_emulator.haapi.account_meta import AccountMeta
 from ankama_launcher_emulator.utils.app_config import (
+    get_check_for_updates,
     get_debug_mode,
     get_last_selected_game,
+    set_check_for_updates,
     set_debug_mode,
 )
 from ankama_launcher_emulator.utils.proxy_store import ProxyStore
+from ankama_launcher_emulator.utils.updater import check_for_update, _current_version
 
 logger = logging.getLogger()
 
@@ -90,6 +96,7 @@ def _build_diagnostics() -> dict[str, str]:
             f"{sys.version_info.major}.{sys.version_info.minor}"
             f".{sys.version_info.micro}"
         ),
+        "Version": _current_version(),
         "Dofus3": "Yes" if DOFUS_INSTALLED else "No",
         "Retro": "Yes" if RETRO_INSTALLED else "No",
         "Cytrus": "Yes" if CYTRUS_INSTALLED else "No",
@@ -173,6 +180,49 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(debug_card)
 
+        # Update settings card
+        update_card = CardWidget()
+        update_card.setStyleSheet(debug_card.styleSheet())
+        update_layout = QVBoxLayout(update_card)
+        update_layout.setContentsMargins(14, 10, 14, 10)
+        update_layout.setSpacing(8)
+
+        update_title = BodyLabel("Updates")
+        update_layout.addWidget(update_title)
+
+        update_toggle_row = QHBoxLayout()
+        update_toggle_row.setSpacing(12)
+
+        update_toggle_text = QVBoxLayout()
+        update_toggle_text.setSpacing(2)
+        update_toggle_title = BodyLabel("Check for updates at startup")
+        update_toggle_desc = CaptionLabel(
+            "Notify when a new version is available on GitHub"
+        )
+        update_toggle_desc.setWordWrap(True)
+        update_toggle_text.addWidget(update_toggle_title)
+        update_toggle_text.addWidget(update_toggle_desc)
+        update_toggle_row.addLayout(update_toggle_text, 1)
+
+        self._update_switch = SwitchButton()
+        self._update_switch.setChecked(get_check_for_updates())
+        self._update_switch.checkedChanged.connect(self._on_update_toggled)
+        update_toggle_row.addWidget(self._update_switch)
+        update_layout.addLayout(update_toggle_row)
+
+        check_now_row = QHBoxLayout()
+        check_now_row.setSpacing(8)
+        check_now_row.addStretch()
+
+        self._check_now_btn = PushButton("Check Now")
+        self._check_now_btn.setFixedHeight(CONTROL_HEIGHT)
+        self._check_now_btn.setStyleSheet(_compact_control_style())
+        self._check_now_btn.clicked.connect(self._on_check_now)
+        check_now_row.addWidget(self._check_now_btn)
+        update_layout.addLayout(check_now_row)
+
+        layout.addWidget(update_card)
+
         # Troubleshooting card
         trouble_card = CardWidget()
         trouble_card.setStyleSheet(debug_card.styleSheet())
@@ -234,6 +284,50 @@ class SettingsDialog(QDialog):
         set_debug_mode(enabled)
         _configure_logging_for_debug(enabled)
         logger.info("[SETTINGS] Debug mode %s", "enabled" if enabled else "disabled")
+
+    def _on_update_toggled(self, enabled: bool) -> None:
+        set_check_for_updates(enabled)
+        logger.info("[SETTINGS] Check for updates %s", "enabled" if enabled else "disabled")
+
+    def _on_check_now(self) -> None:
+        self._check_now_btn.setEnabled(False)
+
+        def task(_on_progress: object) -> dict | None:
+            return check_for_update()  # type: ignore[return-value]
+
+        def on_success(result: object) -> None:
+            self._check_now_btn.setEnabled(True)
+            info = result
+            if info is not None:
+                InfoBar.success(
+                    "",
+                    f"AnkAlt v{info['version']} is available.",  # type: ignore[index]
+                    duration=5000,
+                    position=InfoBarPosition.TOP_RIGHT,
+                    parent=self,
+                )
+            else:
+                InfoBar.info(
+                    "",
+                    "You are on the latest version.",
+                    duration=3000,
+                    position=InfoBarPosition.TOP_RIGHT,
+                    parent=self,
+                )
+
+        def on_error(_err: object) -> None:
+            self._check_now_btn.setEnabled(True)
+            InfoBar.error(
+                "",
+                "Could not check for updates.",
+                duration=4000,
+                position=InfoBarPosition.TOP_RIGHT,
+                parent=self,
+            )
+
+        from ankama_launcher_emulator.gui.utils import run_in_background
+
+        run_in_background(task, on_success=on_success, on_error=on_error, parent=self)
 
     def _open_log_folder(self) -> None:
         try:

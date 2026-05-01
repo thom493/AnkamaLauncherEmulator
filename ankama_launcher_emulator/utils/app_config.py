@@ -52,3 +52,27 @@ def set_debug_mode(enabled: bool) -> None:
     config = _load_app_config()
     config["debug_mode"] = bool(enabled)
     _save_app_config(config)
+
+
+def get_check_for_updates() -> bool:
+    return bool(_load_app_config().get("check_for_updates", True))
+
+
+def set_check_for_updates(enabled: bool) -> None:
+    config = _load_app_config()
+    config["check_for_updates"] = bool(enabled)
+    _save_app_config(config)
+
+
+def get_skipped_version() -> str | None:
+    version = _load_app_config().get("skipped_version")
+    return version if isinstance(version, str) else None
+
+
+def set_skipped_version(version: str | None) -> None:
+    config = _load_app_config()
+    if version is None:
+        config.pop("skipped_version", None)
+    else:
+        config["skipped_version"] = version
+    _save_app_config(config)

@@ -57,6 +57,7 @@ from ankama_launcher_emulator.gui.star_dialog import (
     StarBar,
     has_shown_star_repo,
 )
+from ankama_launcher_emulator.gui.update_banner import UpdateBanner
 from ankama_launcher_emulator.gui.utils import run_in_background
 from ankama_launcher_emulator.haapi.account_manager import remove_account
 from ankama_launcher_emulator.haapi.account_meta import AccountMeta
@@ -75,10 +76,13 @@ from ankama_launcher_emulator.haapi.shield import (
 )
 from ankama_launcher_emulator.server.server import AnkamaLauncherServer
 from ankama_launcher_emulator.utils.app_config import (
+    get_check_for_updates,
     get_last_selected_game,
+    get_skipped_version,
     set_last_selected_game,
 )
 from ankama_launcher_emulator.utils.internet import get_available_network_interfaces
+from ankama_launcher_emulator.utils.updater import check_for_update
 from ankama_launcher_emulator.utils.proxy import build_proxy_listener, verify_proxy_ip
 from ankama_launcher_emulator.utils.proxy_store import ProxyStore
 
@@ -121,6 +125,7 @@ class MainWindow(QMainWindow):
         self._bootstrap_accounts_done = not bootstrap_loading
         self._bootstrap_interfaces_done = not bootstrap_loading
         self._shield_recovery_attempts: dict[str, list[float]] = {}
+        self._update_banner_shown = False
         server_handler = getattr(self._server, "handler", None)
         if server_handler is not None:
             server_handler.on_shield_recovery = self._on_server_shield_recovery
@@ -306,6 +311,9 @@ class MainWindow(QMainWindow):
         action_row.addWidget(add_btn)
         layout.addLayout(action_row)
 
+        self._update_banner = UpdateBanner("", "", parent=content_shell)
+        layout.addWidget(self._update_banner)
+
         self._accounts_scroll = ScrollArea()
         self._accounts_scroll.setWidgetResizable(True)
         vbar = self._accounts_scroll.scrollDelagate.vScrollBar  # type: ignore[attr-defined]
@@ -415,9 +423,35 @@ class MainWindow(QMainWindow):
         self._bootstrap_accounts_done = True
         self._bootstrap_loading = False
         self._sync_empty_state()
+        self._check_for_update_on_startup()
 
     def _finish_bootstrap_interfaces(self) -> None:
         self._bootstrap_interfaces_done = True
+
+    def _check_for_update_on_startup(self) -> None:
+        if self._update_banner_shown:
+            return
+        if not get_check_for_updates():
+            return
+        self._update_banner_shown = True
+
+        def task(_on_progress: object) -> dict | None:
+            return check_for_update()  # type: ignore[return-value]
+
+        def on_success(result: object) -> None:
+            info = result
+            if info is None:
+                return
+            skipped = get_skipped_version()
+            if skipped == info["version"]:  # type: ignore[index]
+                return
+            self._update_banner.set_info(info["version"], info["html_url"])  # type: ignore[index]
+            self._update_banner.show()
+
+        def on_error(_err: object) -> None:
+            pass
+
+        run_in_background(task, on_success=on_success, on_error=on_error, parent=self)
 
     def _update_empty_state_message(self) -> None:
         if self._bootstrap_loading:
