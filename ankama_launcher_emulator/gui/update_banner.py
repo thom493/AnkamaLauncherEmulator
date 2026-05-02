@@ -1,22 +1,14 @@
 import webbrowser
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, CardWidget, PushButton
+from PyQt6.QtWidgets import QHBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, PushButton
 
-from ankama_launcher_emulator.gui.consts import (
-    BORDER_HEXA,
-    ORANGE_HEXA,
-    ORANGE_HOVER_HEXA,
-    PANEL_ALT_HEXA,
-    PANEL_BG_HEXA,
-    TEXT_DIM_HEXA,
-    TEXT_HEXA,
-)
+from ankama_launcher_emulator.gui.consts import ORANGE_HEXA, TEXT_HEXA
 
 
 class UpdateBanner(QWidget):
-    """Persistent update notification banner that sits at the top of the content area."""
+    """Compact single-line update banner with an orange accent background."""
 
     def __init__(self, version: str, html_url: str, parent=None):
         super().__init__(parent)
@@ -26,73 +18,76 @@ class UpdateBanner(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(14, 8, 14, 8)
         layout.setSpacing(10)
 
-        card = CardWidget()
-        card.setStyleSheet(
-            "CardWidget {"
-            f"background-color: {PANEL_BG_HEXA};"
-            f"border: 1px solid {BORDER_HEXA};"
+        self.setStyleSheet(
+            "UpdateBanner {"
+            f"background-color: {ORANGE_HEXA};"
             "border-radius: 16px;"
             "}"
         )
-        card_layout = QHBoxLayout(card)
-        card_layout.setContentsMargins(14, 10, 14, 10)
-        card_layout.setSpacing(12)
 
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(2)
         self._title_label = BodyLabel(f"AnkAlt v{self._version} is available.")
-        self._title_label.setStyleSheet(f"color: {TEXT_HEXA};")
-        text_layout.addWidget(self._title_label)
-
-        hint = BodyLabel("A new release is out on GitHub.")
-        hint.setStyleSheet(f"color: {TEXT_DIM_HEXA};")
-        text_layout.addWidget(hint)
-        card_layout.addLayout(text_layout, 1)
+        self._title_label.setStyleSheet(
+            f"color: {TEXT_HEXA}; font-weight: bold;"
+        )
+        layout.addWidget(self._title_label)
+        layout.addStretch()
 
         open_btn = PushButton("Open Release")
         open_btn.setFixedHeight(28)
         open_btn.setStyleSheet(
             "PushButton {"
-            f"background-color: {ORANGE_HEXA};"
-            f"color: {TEXT_HEXA};"
+            "background-color: #ffffff;"
+            "color: #000000;"
             "border: none;"
             "border-radius: 14px;"
-            "padding: 2px 12px;"
+            "padding: 2px 14px;"
+            "font-weight: bold;"
             "}"
             "PushButton:hover {"
-            f"background-color: {ORANGE_HOVER_HEXA};"
+            "background-color: #f0f0f0;"
             "}"
         )
         open_btn.clicked.connect(self._open_release)
-        card_layout.addWidget(open_btn)
+        layout.addWidget(open_btn)
 
         skip_btn = PushButton("Skip")
         skip_btn.setFixedHeight(28)
         skip_btn.setStyleSheet(
             "PushButton {"
-            f"background-color: {PANEL_ALT_HEXA};"
+            "background-color: transparent;"
             f"color: {TEXT_HEXA};"
-            f"border: 1px solid {BORDER_HEXA};"
+            "border: 1px solid rgba(255,255,255,0.45);"
             "border-radius: 14px;"
-            "padding: 2px 12px;"
+            "padding: 2px 14px;"
             "}"
             "PushButton:hover {"
-            f"border-color: {ORANGE_HEXA};"
+            "background-color: rgba(255,255,255,0.15);"
             "}"
         )
         skip_btn.clicked.connect(self._skip_version)
-        card_layout.addWidget(skip_btn)
+        layout.addWidget(skip_btn)
 
         close_btn = PushButton("✕")
-        close_btn.setFixedSize(28, 28)
-        close_btn.setStyleSheet(skip_btn.styleSheet())
+        close_btn.setFixedSize(32, 32)
+        close_btn.setStyleSheet(
+            "PushButton {"
+            "background-color: transparent;"
+            f"color: {TEXT_HEXA};"
+            "border: none;"
+            "border-radius: 16px;"
+            "font-size: 16px;"
+            "padding: 0px;"
+            "}"
+            "PushButton:hover {"
+            "background-color: rgba(255,255,255,0.15);"
+            "}"
+        )
         close_btn.clicked.connect(self.hide)
-        card_layout.addWidget(close_btn)
+        layout.addWidget(close_btn)
 
-        layout.addWidget(card)
         self.setVisible(False)
 
     def set_info(self, version: str, html_url: str) -> None:
