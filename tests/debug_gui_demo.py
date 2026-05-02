@@ -777,6 +777,9 @@ class _DemoControls:
         for label, callback in [
             ("Cycle Download Banner", self._cycle_banner),
             ("Hide Download Banner", lambda: window._set_panel_status("")),
+            ("Show Update Banner", self._show_update_banner),
+            ("Hide Update Banner", self._hide_update_banner),
+            ("Cycle Update Banner", self._cycle_update_banner),
             ("Open Add Account", window._open_add_account_dialog),
             ("Open Import Dialog", window._open_demo_import_dialog),
             ("Open Export Dialog", window._open_demo_export_dialog),
@@ -814,6 +817,26 @@ class _DemoControls:
         ]
         self._window._set_panel_status(statuses[self._banner_step % len(statuses)])
         self._banner_step += 1
+
+    def _show_update_banner(self) -> None:
+        banner = self._window._update_banner
+        banner.set_info("0.99.0", "https://github.com/Valentin-alix/AnkamaLauncherEmulator/releases/tag/v0.99.0")
+        banner.show()
+
+    def _hide_update_banner(self) -> None:
+        self._window._update_banner.hide()
+
+    def _cycle_update_banner(self) -> None:
+        versions = [
+            ("0.6.0", "https://github.com/Valentin-alix/AnkamaLauncherEmulator/releases/tag/v0.6.0"),
+            ("0.7.0", "https://github.com/Valentin-alix/AnkamaLauncherEmulator/releases/tag/v0.7.0"),
+            ("0.99.0", "https://github.com/Valentin-alix/AnkamaLauncherEmulator/releases/tag/v0.99.0"),
+        ]
+        version, url = versions[self._update_step % len(versions)]
+        banner = self._window._update_banner
+        banner.set_info(version, url)
+        banner.show()
+        self._update_step += 1
 
     def _sync_cytrus_state(self) -> None:
         warning_card = getattr(self._window, "_warning_card", None)
