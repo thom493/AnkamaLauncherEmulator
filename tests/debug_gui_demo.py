@@ -468,10 +468,7 @@ def _style_demo_account_card(card) -> None:
 
 
 def _install_fakes(stack: ExitStack) -> None:
-    with (
-        patch("os.system", return_value=1),
-        contextlib.redirect_stdout(io.StringIO()),
-    ):
+    with contextlib.redirect_stdout(io.StringIO()):
         from ankama_launcher_emulator.gui import account_card
         from ankama_launcher_emulator.gui import add_account_dialog
         from ankama_launcher_emulator.gui import main_window
