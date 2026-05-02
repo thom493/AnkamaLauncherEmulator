@@ -597,9 +597,11 @@ def _install_fakes(stack: ExitStack) -> None:
             dialog.exec() == dialog.DialogCode.Accepted
             and dialog.preview_payload()
         ):
-            window._show_success(
-                f"Demo import ready for {dialog.preview_payload()['login']}"
-            )
+            payload = dialog.preview_payload()
+            if payload is not None:
+                window._show_success(
+                    f"Demo import ready for {payload['login']}"
+                )
 
     def fake_open_export_account_dialog(window, login: str | None = None) -> None:
         target_login = login or "ready.alt@example.com"
