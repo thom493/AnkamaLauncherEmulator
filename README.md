@@ -25,7 +25,8 @@
 
 No build required. Grab the ready-made Windows binary:
 
-1. Go to [**Releases**](https://github.com/Valentin-alix/AnkamaLauncherEmulator/releases)
+1. Go to [**Releases**](https://github.com/thom493/AnkamaLauncherEmulator/releases)
+
 2. Download the latest `AnkAlt Launcher.exe` under **Assets**
 3. Run it
 
@@ -80,7 +81,7 @@ You must have logged in at least once through the official Ankama Launcher so th
 ### Clone and run
 
 ```bash
-git clone https://github.com/Valentin-alix/AnkamaLauncherEmulator
+git clone https://github.com/thom493/AnkamaLauncherEmulator
 cd AnkamaLauncherEmulator
 uv sync
 uv run main.py

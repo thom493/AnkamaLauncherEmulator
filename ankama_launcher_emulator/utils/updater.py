@@ -7,7 +7,7 @@ import requests
 logger = logging.getLogger()
 
 GITHUB_API_LATEST = (
-    "https://api.github.com/repos/Valentin-alix/AnkamaLauncherEmulator/releases/latest"
+    "https://api.github.com/repos/thom493/AnkamaLauncherEmulator/releases/latest"
 )
 
 

@@ -60,7 +60,7 @@ SETTINGS_PATH = os.path.join(ZAAP_PATH, "Settings")
 LAUNCHER_PORT = 26116
 RETRO_TEXT_SOCKET_PORT = 26117
 
-GITHUB_URL = "https://github.com/Valentin-alix/AnkamaLauncherEmulator"
+GITHUB_URL = "https://github.com/thom493/AnkamaLauncherEmulator"
 
 if os.name == "nt":
     app_config_dir = os.path.join(os.environ["APPDATA"], "AnkamaLauncherEmulator")

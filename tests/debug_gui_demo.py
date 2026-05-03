@@ -832,7 +832,7 @@ class _DemoControls:
         banner = self._window._update_banner
         banner.set_info(
             "0.99.0",
-            "https://github.com/Valentin-alix/AnkamaLauncherEmulator/releases/tag/v0.99.0",
+            "https://github.com/thom493/AnkamaLauncherEmulator/releases/tag/v0.99.0",
         )
         banner.show()
 
@@ -843,15 +843,15 @@ class _DemoControls:
         versions = [
             (
                 "0.6.0",
-                "https://github.com/Valentin-alix/AnkamaLauncherEmulator/releases/tag/v0.6.0",
+                "https://github.com/thom493/AnkamaLauncherEmulator/releases/tag/v0.6.0",
             ),
             (
                 "0.7.0",
-                "https://github.com/Valentin-alix/AnkamaLauncherEmulator/releases/tag/v0.7.0",
+                "https://github.com/thom493/AnkamaLauncherEmulator/releases/tag/v0.7.0",
             ),
             (
                 "0.99.0",
-                "https://github.com/Valentin-alix/AnkamaLauncherEmulator/releases/tag/v0.99.0",
+                "https://github.com/thom493/AnkamaLauncherEmulator/releases/tag/v0.99.0",
             ),
         ]
         version, url = versions[self._update_step % len(versions)]
