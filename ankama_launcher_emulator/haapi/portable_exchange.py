@@ -1,7 +1,6 @@
 import base64
 import json
 import os
-from importlib.metadata import PackageNotFoundError, version
 from typing import NotRequired, TypedDict
 
 from cryptography.exceptions import InvalidTag
@@ -9,6 +8,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+from ankama_launcher_emulator._version import get_version
 from ankama_launcher_emulator.consts import (
     ALT_API_KEY_FOLDER_PATH,
     ALT_CERTIFICATE_FOLDER_PATH,
@@ -66,10 +66,7 @@ class PortableAccountPayload(TypedDict):
 
 
 def _app_version() -> str:
-    try:
-        return version("ankama_launcher_emulator")
-    except PackageNotFoundError:
-        return "0.1.0"
+    return get_version()
 
 
 def _b64encode(raw: bytes) -> str:

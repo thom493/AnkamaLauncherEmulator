@@ -1,8 +1,9 @@
 import logging
-from importlib.metadata import PackageNotFoundError, version
 from typing import TypedDict
 
 import requests
+
+from ankama_launcher_emulator._version import get_version
 
 logger = logging.getLogger()
 
@@ -18,10 +19,7 @@ class UpdateInfo(TypedDict):
 
 
 def _current_version() -> str:
-    try:
-        return version("ankama_launcher_emulator")
-    except PackageNotFoundError:
-        return "0.0.0"
+    return get_version()
 
 
 def _parse_semver(v: str) -> tuple[int, ...]:
